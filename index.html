@@ -1,0 +1,1323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bomb Arena</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #141128; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #f3eefc; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
+  [hidden] { display: none !important; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 1px 3px #000a; }
+  #net { bottom: max(8px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); font-size: 12px; opacity: .75; white-space: nowrap; }
+  #hint { left: 50%; transform: translateX(-50%); width: min(500px, calc(100vw - 32px)); box-sizing: border-box; padding: 8px 14px; border-radius: 12px;
+          background: #141128e0; text-align: center; font-size: 14px; font-weight: 600; color: #ffd98a; text-shadow: none; transition: opacity .6s; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0d0b1cb0; padding: 16px; box-sizing: border-box; }
+  .card { box-sizing: border-box; width: min(380px, calc(100vw - 32px)); max-height: 88vh; overflow: auto; padding: 20px; border-radius: 18px; background: #221d42; border: 1px solid #ffffff22; text-align: center; box-shadow: 0 20px 60px #0009; }
+  .card h2 { margin: 0 0 8px; font-size: 25px; }
+  .card h3 { margin: 14px 0 2px; font-size: 12px; letter-spacing: .1em; color: #a99fd6; text-align: left; }
+  .card ol { text-align: left; margin: 6px 0; padding-left: 26px; font-size: 14px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card li.me { color: #ffd23f; font-weight: 700; }
+  .card li i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; }
+  button.go { width: 100%; min-height: 48px; margin-top: 12px; border: 0; border-radius: 12px; background: #ffd23f; color: #221d42; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  #oNext { color: #a99fd6; font-size: 13px; margin-top: 8px; }
+  #pad { position: fixed; left: max(16px, env(safe-area-inset-left)); bottom: calc(max(12px, env(safe-area-inset-bottom)) + 26px); width: 168px; height: 168px; border-radius: 50%; background: #ffffff0f; touch-action: none; }
+  #pad b { position: absolute; width: 56px; height: 56px; border-radius: 16px; background: #ffffff22; pointer-events: none; }
+  #pad b::after { content: ""; position: absolute; inset: 17px; background: #ffffffd0; clip-path: polygon(50% 10%, 94% 84%, 6% 84%); }
+  #pad b.on { background: #ffffff66; }
+  #pad [data-d="0"] { left: 56px; top: 0; } #pad [data-d="1"] { left: 112px; top: 56px; transform: rotate(90deg); }
+  #pad [data-d="2"] { left: 56px; top: 112px; transform: rotate(180deg); } #pad [data-d="3"] { left: 0; top: 56px; transform: rotate(270deg); }
+  #bombBtn { position: fixed; right: max(18px, env(safe-area-inset-right)); bottom: calc(max(12px, env(safe-area-inset-bottom)) + 48px); width: 104px; height: 104px; border-radius: 50%;
+             border: 3px solid #ffffff66; background: #ff5d73d8; touch-action: none; padding: 0; display: grid; place-items: center; box-shadow: 0 6px 18px #0008; }
+  #bombBtn.on { background: #ffd23f; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="safe" style="position:fixed;top:0;height:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);pointer-events:none"></div>
+<div class="hud" id="hint" style="opacity:0"></div>
+<div class="hud" id="net">Connecting…</div>
+<div id="pad" hidden><b data-d="0"></b><b data-d="1"></b><b data-d="2"></b><b data-d="3"></b></div>
+<button id="bombBtn" hidden aria-label="Drop a bomb"><svg width="56" height="56" viewBox="0 0 56 56"><circle cx="25" cy="32" r="17" fill="#1d1b2e"/><circle cx="19" cy="26" r="5" fill="#ffffff44"/><path d="M35 19 q6 -9 13 -7" stroke="#e8d6a8" stroke-width="4" fill="none" stroke-linecap="round"/><circle cx="48" cy="12" r="5" fill="#ffd23f"/></svg></button>
+<div id="over" hidden><div class="card">
+  <h2 id="oTitle"></h2>
+  <ol id="places"></ol>
+  <h3>MOST ROUNDS WON</h3><ol id="board"><li>Loading the leaderboard…</li></ol>
+  <button class="go" id="again">Play again</button><div id="oNext"></div>
+</div></div>
+<script>
+/* ═══ BOMB ARENA · a Multiplayer Agent starter ═══════════════════════════════════════════
+ * Drop bombs, break crates, be the last one standing. Versus, 2–8 players; bots fill the
+ * arena up to four. First to 3 round wins takes the match.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ arena size, fuse, blast, speeds, power-ups, rounds, sudden death, bots
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   ARENA ......... the tile grid: pillars, crates, hidden power-ups, spawns, the sudden-death spiral
+ *   BOMBS ......... where a bomb is (kicked bombs slide), how far a blast reaches, chain reactions
+ *   WALKING ....... tile-to-tile movement for players and bots; smoothing other people's moves
+ *   ROUNDS (HOST) . countdown, play, who got caught, round wins, the match. Only the host writes these.
+ *   WORLD (HOST) .. bombs going off, crates breaking, power-ups, kicks, walls closing in
+ *   BOTS (HOST) ... danger map, running from blasts, bombing crates and rivals, grabbing power-ups
+ *   ME ............ my walker, dropping bombs, kicking, picking up. Each player writes only its own.
+ *   EFFECTS ....... particles, shake, sounds, and spotting what changed in state
+ *   DRAW .......... floor, blocks, crates, power-ups, bombs, flames, players, top bar, banners
+ *   HUD & RESULTS . #net, the hint, the results card, leaderboard
+ *   INPUT ......... keyboard, D-pad and bomb button
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player writes its OWN entity: `p` {r, x, y, f, k, w} (round id, position in tiles,
+ *     facing, tiles stepped so far, the last three tiles stepped on) up to ~14 times a second
+ *     while it moves, `hb` (heartbeat) once a second, `n`/`c` (name, color) once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes the shared fields:
+ *       `round` {id, v, ph, rn, seed, startAt, sdAt, endsAt, players, bots, spot, out, wins, win, champ, ready}:
+ *               the round and the match. `v` goes up on every write. Someone who joins mid-round
+ *               takes over a bot still in it (`spot` = the tile they start on).
+ *       `grid`  {r, g}: the arena as ONE string ("#" wall, "." floor, "c" crate, B F S K power-ups)
+ *       `boom`  {r, t, nb, b, f}: live bombs (each with its explode time) and blasts still burning
+ *       `stats` {r, s}: each player's power-ups [bombs, blast, speed, kick]
+ *       `bots`  {r, l}: where the bots are, ~10 times a second
+ *   - Intents to the host: "bomb" {r, x, y}, "kick" {r, i, d}, "pick" {r, x, y}, "ready" {}.
+ *     The host checks each against state and writes the result. Its own player calls the same
+ *     functions directly (mp.send never comes back to the sender).
+ *   - Every bomb carries its explode time `at`. At that moment every screen sets it off itself
+ *     (same chain rules, same state), so the flames appear everywhere at once; the host's result
+ *     (broken crates, who got caught) lands in state a moment later.
+ *   - What a crate hides comes from the round's seed, so a new host knows too.
+ *   - A new host adopts round, grid, bombs, stats and bots from state and carries on.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "round-wins": every round you win adds 1.
+ */
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  cols: 15, rows: 13,       // arena size in tiles, both odd (a pillar stands on every even/even tile)
+  seats: 4,                 // bots fill the arena up to this many players
+  maxPlayers: 8,            // more people than this watch and play a later round
+  winsToWin: 3,             // round wins that take the match
+  crates: 0.7,              // share of open tiles that start with a crate
+  dropChance: 0.4,          // chance a crate hides a power-up
+  drops: { B: 0.34, F: 0.32, S: 0.2, K: 0.14 }, // which one: B = +1 bomb, F = +1 blast, S = speed, K = kick
+  startBombs: 1,            // bombs you can have out at once at the start of a round…
+  maxBombs: 8,              // …and at most
+  startFire: 2,             // tiles a blast reaches each way at the start…
+  maxFire: 8,               // …and at most
+  maxSpeed: 4,              // Speed power-ups that count
+  fuseMs: 2400,             // a bomb's fuse
+  flameMs: 550,             // how long a blast keeps burning
+  stepMs: 190,              // ms to walk one tile…
+  speedStepMs: 22,          // …minus this per Speed power-up
+  kickTileMs: 75,           // a kicked bomb slides one tile this fast
+  roundMs: 50000,           // ms of play before sudden death
+  sdStepMs: 160,            // sudden death: a wall block drops this often, spiralling inward
+  hurryMs: 2500,            // when every person in the round is out, sudden death starts this soon
+  countMs: 3000,            // countdown before a round
+  endMs: 3000,              // the "wins the round" moment
+  overMs: 12000,            // the match results card
+  sendMs: 70,               // my position goes out at most this often (~14/s)
+  worldMs: 90,              // the host writes bombs, grid and bots at most this often
+  botThinkMs: [120, 320],   // a bot's pause before it picks its next move
+  botReactMs: [220, 520],   // how long a bot takes to notice a blast aimed at it
+  botBombGapMs: [600, 1600], // a bot waits this long between its bombs
+  botAggro: 0.4,            // chance per thought that a bot bombs a rival in its blast line…
+  botAggroLate: 0.85,       // …and once the walls start dropping
+  botHunt: 0.4,             // chance a bot goes after a rival while there are still crates to break
+  botMistake: 0.18,         // chance a bot misjudges how far other bombs reach when it runs
+  botSafetyMs: 200,         // bots keep this much time between themselves and a blast
+  wallAheadMs: 2500,        // bots leave tiles that sudden-death walls fill within this long
+  board: "round-wins",      // leaderboard name
+};
+const BOT_NAMES = ["Boomer", "Sparky", "Fuse", "Kaboom", "Dynamo", "Wick", "Blasty", "Pop"];
+const COLORS = ["#ff5d73", "#4cc9f0", "#ffd23f", "#7ae582", "#c77dff", "#ff9f43", "#f472b6", "#2ee6c9"];
+const ITEMS = { B: "Bomb", F: "Fire", S: "Speed", K: "Kick" };            // power-ups, as letters in the grid
+const ITEM_TEXT = { B: "+1 bomb", F: "+1 blast", S: "Faster!", K: "Kick bombs!" };
+const ITEM_COLOR = { B: "#4c7dff", F: "#ff5a3c", S: "#22b866", K: "#a259ff" };
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'bomb-arena',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A JSON field (shared or a player's), parsed once per change, then `map`ped. Read-only: never mutate it. */
+function cached(key, raw, fb, map) { const m = memo.get(key); if (m && m.raw === raw) return m.v; let v = parse(raw, fb); if (map && v) v = map(v); memo.set(key, { raw, v }); return v; }
+let net = null, S = { entities: { players: {} }, shared: {} }, amHost = false, joinedAt = 0;
+const seenHb = new Map();
+/** Players whose heartbeat moved in the last 3s (plus us), sorted by sessionId. */
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+let frameAt = 0, wokeAt = -1e9; // my loop's last frame, and when it last woke from a stall (a frozen or background tab)
+/** Never while my own loop is stalled, nor for 0.7s after it wakes: the room moved on without me, so the newer state lands first. */
+const isHost = () => livePlayers()[0] === net.sessionId && performance.now() - frameAt < 1000 && performance.now() - wokeAt > 700;
+const humans = () => livePlayers().filter((id) => !(ATTRACT && id === net.sessionId));
+
+// ── ARENA ───────────────────────────────────────────────────────────────────────────
+// Tiles in the grid string: "#" wall or pillar · "." floor · "c" crate · B F S K a power-up lying on the floor.
+const C = CONFIG.cols, R = CONFIG.rows, N = C * R;
+const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]; // directions: 0 up, 1 right, 2 down, 3 left
+const tileOf = (x, y) => y * C + x;
+const inArena = (x, y) => x >= 0 && y >= 0 && x < C && y < R;
+const isPillar = (x, y) => x === 0 || y === 0 || x === C - 1 || y === R - 1 || (x % 2 === 0 && y % 2 === 0);
+const rand = (a, b) => a + Math.random() * (b - a);
+const MIDX = Math.floor(C / 2), MIDY = Math.floor(R / 2);
+/** Start tiles in seat order: the four corners, then the middle of each side. */
+const SPAWNS = [[1, 1], [C - 2, R - 2], [C - 2, 1], [1, R - 2], [MIDX, 1], [MIDX, R - 2], [1, MIDY], [C - 2, MIDY]];
+/** Sudden death fills the open tiles in this order: round the outside, then inward. */
+const SPIRAL = (() => {
+  const out = []; let x0 = 1, y0 = 1, x1 = C - 2, y1 = R - 2;
+  while (x0 <= x1 && y0 <= y1) {
+    for (let x = x0; x <= x1; x++) out.push(tileOf(x, y0));
+    for (let y = y0 + 1; y <= y1; y++) out.push(tileOf(x1, y));
+    if (y1 > y0) for (let x = x1 - 1; x >= x0; x--) out.push(tileOf(x, y1));
+    if (x1 > x0) for (let y = y1 - 1; y > y0; y--) out.push(tileOf(x0, y));
+    x0++; y0++; x1--; y1--;
+  }
+  return out.filter((t) => !isPillar(t % C, Math.floor(t / C)));
+})();
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+/** A fresh arena from a seed: pillars, then crates everywhere except around the start tiles. */
+function makeGrid(seed) {
+  const rnd = mulberry32(seed), g = [];
+  for (let y = 0; y < R; y++) for (let x = 0; x < C; x++) {
+    const nearStart = SPAWNS.some(([sx, sy]) => Math.abs(sx - x) <= 1 && Math.abs(sy - y) <= 1);
+    g.push(isPillar(x, y) ? "#" : !nearStart && rnd() < CONFIG.crates ? "c" : ".");
+  }
+  return g;
+}
+const EMPTY_GRID = (() => { const s = CONFIG.crates; CONFIG.crates = 0; const g = makeGrid(1).join(""); CONFIG.crates = s; return g; })();
+/** What crate tile t hides this round ("." = nothing). The same on every screen: it comes from the seed. */
+function hiddenItem(seed, t) {
+  const rnd = mulberry32((seed ^ Math.imul(t + 1, 2654435761)) >>> 0);
+  if (rnd() >= CONFIG.dropChance) return ".";
+  let k = rnd();
+  for (const [item, p] of Object.entries(CONFIG.drops)) if ((k -= p) < 0) return item;
+  return "B";
+}
+
+// ── BOMBS ───────────────────────────────────────────────────────────────────────────
+// A bomb: { i: id, x, y, at: explode time (Date.now() ms), p: blast length, o: owner's seat, k: kick or null }.
+// A kicked bomb slides from (k.x0, k.y0) to (x, y) between k.t0 and k.t1.
+function bombPos(b, now) {
+  if (!b.k || now >= b.k.t1) return { x: b.x, y: b.y };
+  const u = Math.max(0, (now - b.k.t0) / Math.max(1, b.k.t1 - b.k.t0));
+  return { x: b.k.x0 + (b.x - b.k.x0) * u, y: b.k.y0 + (b.y - b.k.y0) * u };
+}
+const bombTile = (b, now) => { const p = bombPos(b, now); return [Math.round(p.x), Math.round(p.y)]; };
+const bombTileSet = (bombs, now) => new Set(bombs.map((b) => { const [x, y] = bombTile(b, now); return tileOf(x, y); }));
+/** How far a blast at (x, y) reaches each way [up, right, down, left]. It stops before a wall, and ON the
+ *  first crate (it breaks), power-up (it burns) or bomb (it goes off too). */
+function blastArms(x, y, power, grid, hasBomb) {
+  const arms = [0, 0, 0, 0];
+  for (let d = 0; d < 4; d++) for (let s = 1; s <= power; s++) {
+    const tx = x + DX[d] * s, ty = y + DY[d] * s, c = inArena(tx, ty) ? grid[tileOf(tx, ty)] : "#";
+    if (c === "#" || c === undefined) break;
+    arms[d] = s;
+    if (c !== "." || hasBomb(tx, ty)) break;
+  }
+  return arms;
+}
+/** A blast: { i: the bomb's id, at, o: owner's seat, x, y, a: arms }. */
+function blastTiles(f) { const out = [tileOf(f.x, f.y)]; for (let d = 0; d < 4; d++) for (let s = 1; s <= f.a[d]; s++) out.push(tileOf(f.x + DX[d] * s, f.y + DY[d] * s)); return out; }
+function inBlast(f, x, y) {
+  if (x === f.x && y === f.y) return true;
+  if (x === f.x) return y < f.y ? f.y - y <= f.a[0] : y - f.y <= f.a[2];
+  if (y === f.y) return x > f.x ? x - f.x <= f.a[1] : f.x - x <= f.a[3];
+  return false;
+}
+const burning = (f, now) => now >= f.at && now < f.at + CONFIG.flameMs;
+/** The bombs whose time has come, plus every bomb their blasts reach (a chain goes off in the same moment).
+ *  Pure: the host applies the result, every other screen uses it to show the blast on time. */
+function resolveBlasts(bombs, grid, now, skip) {
+  const live = skip ? bombs.filter((b) => !skip(b)) : bombs, tiles = new Map(live.map((b) => [b, bombTile(b, now)]));
+  const queue = live.filter((b) => b.at <= now), gone = new Set(queue.map((b) => b.i)), blasts = [];
+  const ats = new Map(queue.map((b) => [b.i, now - b.at < 250 ? b.at : now])); // long overdue (a new host): now
+  while (queue.length) {
+    const b = queue.shift(), [x, y] = tiles.get(b), at = ats.get(b.i);
+    const a = blastArms(x, y, b.p, grid, (tx, ty) => live.some((o) => o !== b && tiles.get(o)[0] === tx && tiles.get(o)[1] === ty));
+    const f = { i: b.i, at, o: b.o, x, y, a };
+    blasts.push(f);
+    for (const o of live) if (!gone.has(o.i) && inBlast(f, ...tiles.get(o))) { gone.add(o.i); ats.set(o.i, at); queue.push(o); }
+  }
+  return { blasts, gone };
+}
+
+// ── WALKING ─────────────────────────────────────────────────────────────────────────
+/** A walker stands on tile (cx, cy), or is t (0..1) of the way from it to (tx, ty). k counts the tiles it
+ *  has reached; trail holds the last three, so other screens can replay its path exactly. */
+function newWalker(x, y) { return { cx: x, cy: y, tx: x, ty: y, t: 0, f: 2, k: 0, trail: [[x, y]] }; }
+const walkerPos = (w) => ({ x: w.cx + (w.tx - w.cx) * w.t, y: w.cy + (w.ty - w.cy) * w.t });
+const walkerTile = (w) => (w.t < 0.5 ? [w.cx, w.cy] : [w.tx, w.ty]);
+/** Move a walker dt seconds. wants(w, onTile) lists the directions it would like, best first;
+ *  blocked(x, y, d) says a tile can't be entered. Turning back halfway is allowed. */
+function walk(w, dt, stepMs, wants, blocked) {
+  let left = (dt * 1000) / stepMs;
+  for (let guard = 0; guard < 4 && left > 1e-6; guard++) {
+    if (w.t === 0) {
+      const dirs = wants(w, true) || [];
+      const d = dirs.find((dir) => !blocked(w.cx + DX[dir], w.cy + DY[dir], dir));
+      if (dirs.length) w.f = d ?? dirs[0];
+      if (d === undefined) return;
+      w.tx = w.cx + DX[d]; w.ty = w.cy + DY[d];
+    } else {
+      const back = (wants(w, false) || [])[0];
+      if (back !== undefined && w.cx - w.tx === DX[back] && w.cy - w.ty === DY[back] && !blocked(w.cx, w.cy, back)) {
+        [w.cx, w.tx, w.cy, w.ty] = [w.tx, w.cx, w.ty, w.cy]; w.t = 1 - w.t; w.f = back;
+      }
+    }
+    const step = Math.min(left, 1 - w.t);
+    w.t += step; left -= step;
+    if (w.t >= 1 - 1e-6) { w.cx = w.tx; w.cy = w.ty; w.t = 0; w.k++; w.trail.push([w.cx, w.cy]); if (w.trail.length > 3) w.trail.shift(); }
+  }
+}
+const statsOf = (stats, id) => (stats && stats[id]) || [CONFIG.startBombs, CONFIG.startFire, 0, 0];
+const stepMsOf = (stats, id) => Math.max(80, CONFIG.stepMs - Math.min(CONFIG.maxSpeed, statsOf(stats, id)[2]) * CONFIG.speedStepMs);
+
+// Someone else's walker on this screen: it replays the tiles they stepped on (from `w` in their
+// snapshots) at their walking speed, so it follows the corridors and never cuts a corner.
+const views = new Map(); // id -> { x, y, f, k, r, q: points to walk through, src, moving }
+function trackView(id, src, stepMs, dt) {
+  let v = views.get(id);
+  if (!v) { v = { x: +src.x || 0, y: +src.y || 0, f: src.f | 0, k: src.k | 0, r: src.r, q: [], src: null, moving: false }; views.set(id, v); }
+  if (src !== v.src) { v.src = src; feedView(v, src); }
+  stepView(v, dt, stepMs);
+  return v;
+}
+function feedView(v, p) {
+  const x = +p.x, y = +p.y, k = p.k | 0;
+  if (!isFinite(x) || !isFinite(y)) return;
+  v.f = p.f | 0;
+  if (p.r !== v.r || k < v.k || k - v.k > 3 || Math.hypot(x - v.x, y - v.y) > 3.5) { Object.assign(v, { x, y, k, r: p.r, q: [] }); return; } // a new round or a jump: snap
+  if (v.q.length && v.q[v.q.length - 1].soft) v.q.pop();
+  const trail = Array.isArray(p.w) ? p.w : [];
+  trail.forEach((c, j) => { const kk = k - (trail.length - 1 - j); if (kk > v.k && Array.isArray(c)) { v.q.push({ x: +c[0], y: +c[1] }); v.k = kk; } });
+  v.k = Math.max(v.k, k);
+  v.q.push({ x, y, soft: true }); // where they are right now
+}
+function stepView(v, dt, stepMs) {
+  let budget = ((dt * 1000) / stepMs) * (1 + 0.5 * Math.max(0, v.q.length - 2)); // behind? catch up a little
+  v.moving = false;
+  while (budget > 1e-6 && v.q.length) {
+    const t = v.q[0], d = Math.hypot(t.x - v.x, t.y - v.y);
+    if (d <= budget) { v.x = t.x; v.y = t.y; budget -= d; v.moving = v.moving || d > 0.001; if (t.soft && v.q.length === 1) break; v.q.shift(); }
+    else { v.x += ((t.x - v.x) / d) * budget; v.y += ((t.y - v.y) / d) * budget; budget = 0; v.moving = true; }
+  }
+}
+
+// ── ROUNDS (HOST) ───────────────────────────────────────────────────────────────────
+const host = { last: null, bots: new Map(), botsRaw: "", lastBots: 0, danger: null, bombSet: new Set() };
+/** The round as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function round() {
+  const r = cached("round", S.shared.round, null);
+  return host.last && amHost && (!r || host.last.v > r.v) ? host.last : r;
+}
+function writeRound(r) { r = { ...r, v: (round()?.v ?? 0) + 1 }; host.last = r; net.setShared("round", JSON.stringify(r)); return r; }
+const isOut = (r, id) => r.out.some((o) => o[0] === id);
+const isBot = (r, id) => r.bots.some((b) => b.i === id);
+const nameOf = (r, id) => (id === net.sessionId ? myName : r?.bots.find((b) => b.i === id)?.n) || String(S.entities.players?.[id]?.n ?? "Player").slice(0, 12);
+const colorOf = (r, id) => (id === net.sessionId ? myColor : r?.bots.find((b) => b.i === id)?.c) || S.entities.players?.[id]?.c || "#aaa";
+
+/** A new round: the people in the room (up to maxPlayers) plus bots to fill the seats, a new arena. */
+function startRound(prev, freshMatch) {
+  const people = humans().slice(0, CONFIG.maxPlayers), nBots = Math.max(0, CONFIG.seats - people.length);
+  const old = prev && !freshMatch ? prev.bots : [], used = new Set(people.map((id) => colorOf(null, id)));
+  const salt = prev ? prev.id : Math.floor(Math.random() * BOT_NAMES.length);
+  const bots = Array.from({ length: nBots }, (_, k) => old[k] ? { ...old[k] } : { i: "b" + (k + 1), n: BOT_NAMES[(salt + k) % BOT_NAMES.length], c: "" });
+  for (const b of bots) if (b.c && !used.has(b.c)) used.add(b.c); else b.c = "";             // a bot keeps its color if nobody took it
+  for (const b of bots) if (!b.c) { b.c = COLORS.find((c) => !used.has(c)) || COLORS[0]; used.add(b.c); }
+  const players = [...people, ...bots.map((b) => b.i)], id = (prev?.id ?? 0) + 1, seed = (Math.random() * 1e9) | 0, startAt = Date.now() + CONFIG.countMs;
+  Object.assign(world, { rid: id, base: startAt, grid: makeGrid(seed), bombs: [], fire: [], nb: 1 });
+  world.stats = Object.fromEntries(players.map((p) => [p, [CONFIG.startBombs, CONFIG.startFire, 0, 0]]));
+  host.bots = new Map(bots.map((b, k) => { const bot = newBot(...SPAWNS[(people.length + k) % SPAWNS.length]); bot.thinkAt = startAt + rand(100, 700); return [b.i, bot]; }));
+  world.dirty = { grid: true, boom: true, stats: true }; host.lastBots = 0;
+  writeWorld(true); // the world first, then the round that points at it
+  const fresh = freshMatch || !prev;
+  return writeRound({ id, ph: "count", rn: fresh ? 1 : prev.rn + 1, seed, startAt, sdAt: startAt + CONFIG.roundMs, endsAt: 0, players, bots, spot: {}, out: [], wins: fresh ? {} : prev.wins, win: "", champ: "", ready: [] });
+}
+/** Someone joined mid-round: they take over a bot that's still in it (its seat, its tile, its power-ups). */
+function seatJoiners(r) {
+  if (r.ph !== "count" && r.ph !== "play") return r;
+  const waiting = humans().filter((id) => !r.players.includes(id));
+  let players = r.players, bots = r.bots, spot = r.spot || {};
+  for (const id of waiting) {
+    const b = bots.find((b) => !isOut(r, b.i));
+    if (!b) break;
+    const p = posOf(r, b.i);
+    players = players.map((x) => (x === b.i ? id : x)); bots = bots.filter((x) => x !== b); spot = { ...spot, [id]: [Math.round(p.x), Math.round(p.y)] };
+    world.stats[id] = statsOf(world.stats, b.i); world.dirty.stats = true;
+    host.bots.delete(b.i);
+  }
+  return players === r.players ? r : writeRound({ ...r, players, bots, spot });
+}
+/** Where a player starts this round: its seat's start tile, or the tile of the bot it took over. */
+const startTile = (r, id) => (r.spot && r.spot[id]) || SPAWNS[Math.max(0, r.players.indexOf(id)) % SPAWNS.length];
+/** One survivor wins the round (and maybe the match); nobody left is a draw. */
+function finishIfDone(r, now) {
+  const alive = r.players.filter((id) => !isOut(r, id));
+  if (alive.length > (r.players.length > 1 ? 1 : 0)) return writeRound(r);
+  const win = alive[0] || "", wins = { ...r.wins };
+  if (win) wins[win] = (wins[win] || 0) + 1;
+  const champ = win && wins[win] >= CONFIG.winsToWin ? win : "";
+  return writeRound({ ...r, ph: champ ? "over" : "end", win, wins, champ, endsAt: now + (champ ? CONFIG.overMs : CONFIG.endMs), ready: [] });
+}
+/** People who left (or froze for 3s) are out of the round. */
+function checkLeft(r, now) {
+  if (r.ph !== "play" && r.ph !== "count") return r;
+  const live = new Set(livePlayers()), gone = r.players.filter((id) => !isBot(r, id) && !live.has(id) && !isOut(r, id));
+  return gone.length ? finishIfDone({ ...r, out: [...r.out, ...gone.map((id) => [id, -2])] }, now) : r;
+}
+/** Anyone standing in fire, or under a wall that just dropped, is caught. Everyone at once, then one decision. */
+function catchPlayers(r, now) {
+  const caught = [];
+  for (const id of r.players) {
+    if (isOut(r, id)) continue;
+    const p = posOf(r, id), x = Math.round(p.x), y = Math.round(p.y);
+    if (!inArena(x, y) || world.grid[tileOf(x, y)] === "#") { caught.push([id, -1]); continue; }
+    const f = world.fire.find((f) => burning(f, now) && inBlast(f, x, y));
+    if (f) caught.push([id, f.o]);
+  }
+  return caught.length ? finishIfDone({ ...r, out: [...r.out, ...caught] }, now) : r;
+}
+/** Every person is out and only bots are left: bring sudden death forward so the round wraps up. */
+function hurry(r, now) {
+  const people = r.players.filter((id) => !isBot(r, id));
+  return people.length && people.every((id) => isOut(r, id)) && r.sdAt > now + CONFIG.hurryMs ? writeRound({ ...r, sdAt: now + CONFIG.hurryMs }) : r;
+}
+function onReady(from) {
+  const r = round();
+  if (!r || r.ph !== "over" || r.ready.includes(from)) return;
+  const ready = [...r.ready, from];
+  writeRound({ ...r, ready, endsAt: humans().every((id) => ready.includes(id)) ? Math.min(r.endsAt, Date.now() + 1000) : r.endsAt });
+}
+/** Where a player is, as the host sees it: its own walker, a bot's walker, or a player's last snapshot. */
+function posOf(r, id) {
+  if (id === net.sessionId && me.w && me.r === r.id) return walkerPos(me.w);
+  const bot = host.bots.get(id);
+  if (bot) return walkerPos(bot.w);
+  const p = cached("p:" + id, S.entities.players?.[id]?.p, null);
+  if (p && p.r === r.id && isFinite(p.x) && isFinite(p.y)) return { x: +p.x, y: +p.y };
+  const s = startTile(r, id);
+  return { x: s[0], y: s[1] };
+}
+function hostTick(dt, now) {
+  let r = round();
+  if (!r) { if (!ATTRACT && performance.now() - joinedAt < 1500) return; world.was = true; r = startRound(null, true); } // give the room a moment to show up first
+  if (!world.was) adopt();
+  r = seatJoiners(r);
+  r = checkLeft(r, now);
+  if (r.ph === "count" && now >= r.startAt) r = writeRound({ ...r, ph: "play" });
+  if (r.ph === "play") { explodeDue(r, now); suddenDeath(r, now); r = hurry(r, now); r = catchPlayers(r, now); }
+  else if (r.ph === "end") { explodeDue(r, now); if (now >= r.endsAt) r = startRound(r, false); }
+  else if (r.ph === "over" && now >= r.endsAt) r = startRound(r, true);
+  botsTick(r, dt, now);
+  writeWorld(false);
+}
+
+// ── WORLD (HOST) ────────────────────────────────────────────────────────────────────
+// The host's live copy. Everyone else reads the same things from shared state (sharedView).
+const world = { was: false, rid: 0, base: 0, grid: [], bombs: [], fire: [], stats: {}, nb: 1, dirty: {}, lastWrite: 0 };
+/** Become host: take the world over exactly as state has it (overdue bombs go off on the first tick). */
+function adopt() {
+  world.was = true; host.last = null;
+  const r = round();
+  if (!r) return;
+  const v = sharedView(r), bm = parse(S.shared.boom, null);
+  Object.assign(world, { rid: r.id, base: bm && bm.r === r.id ? +bm.t : r.startAt, grid: [...v.grid], nb: v.nb, dirty: {} });
+  world.bombs = v.bombs.map((b) => ({ ...b, k: b.k && { ...b.k } }));
+  world.fire = v.fire.map((f) => ({ ...f, a: [...f.a] }));
+  world.stats = JSON.parse(JSON.stringify(v.stats));
+  host.bots = new Map();
+  const bl = botSnaps();
+  for (const b of r.bots) {
+    const e = bl && bl.r === r.id && bl.m.get(b.i), s = SPAWNS[r.players.indexOf(b.i)] || SPAWNS[0];
+    host.bots.set(b.i, newBot(e ? Math.round(e.x) : s[0], e ? Math.round(e.y) : s[1]));
+  }
+}
+/** The world as this screen sees it: the host's live copy, or what's in shared state. Read-only. */
+function view(r) {
+  if (amHost && world.was) return { grid: world.grid, bombs: world.bombs, fire: world.fire, stats: world.stats, gr: world.rid, nb: world.nb };
+  return sharedView(r);
+}
+function sharedView(r) {
+  const g = cached("grid", S.shared.grid, null), st = cached("stats", S.shared.stats, null), bm = boomOf(r);
+  return { grid: g && typeof g.g === "string" && g.g.length === N ? g.g : EMPTY_GRID, gr: g ? g.r : 0, bombs: bm.bombs, fire: bm.fire, nb: bm.nb, stats: st && st.r === r.id && st.s ? st.s : {} };
+}
+/** The `boom` field decoded: times are stored relative to `t` to keep it short. */
+function boomOf(r) {
+  const raw = S.shared.boom, m = memo.get("boom!");
+  if (m && m.raw === raw && m.rid === r.id) return m.v;
+  const o = parse(raw, null), v = { bombs: [], fire: [], nb: 1 };
+  if (o && o.r === r.id) {
+    const t = +o.t || 0;
+    v.nb = +o.nb || 1;
+    for (const e of o.b || []) v.bombs.push({ i: e[0], x: e[1], y: e[2], at: t + e[3], p: e[4], o: e[5], k: e.length > 6 ? { x0: e[6], y0: e[7], t0: t + e[8], t1: t + e[9] } : null });
+    for (const e of o.f || []) v.fire.push({ i: e[0], at: t + e[1], o: e[2], x: e[3], y: e[4], a: [e[5], e[6], e[7], e[8]] });
+  }
+  memo.set("boom!", { raw, rid: r.id, v });
+  return v;
+}
+function encodeBoom() {
+  const t = world.base, b = world.bombs.map((b) => { const e = [b.i, b.x, b.y, b.at - t, b.p, b.o]; if (b.k) e.push(b.k.x0, b.k.y0, b.k.t0 - t, b.k.t1 - t); return e; });
+  let f = world.fire.map((f) => [f.i, f.at - t, f.o, f.x, f.y, ...f.a]), s = "";
+  do { s = JSON.stringify({ r: world.rid, t, nb: world.nb, b, f }); f = f.slice(1); } while (s.length > 2000 && f.length); // stay under the 2048-char limit
+  return s;
+}
+/** Write what changed, at most every worldMs (one message per field). */
+function writeWorld(force) {
+  const now = performance.now();
+  if (!force && now - world.lastWrite < CONFIG.worldMs) return;
+  world.lastWrite = now;
+  if (world.dirty.grid) net.setShared("grid", JSON.stringify({ r: world.rid, g: world.grid.join("") }));
+  if (world.dirty.boom) net.setShared("boom", encodeBoom());
+  if (world.dirty.stats) net.setShared("stats", JSON.stringify({ r: world.rid, s: world.stats }));
+  world.dirty = {};
+  if (force || now - host.lastBots > 100) {
+    host.lastBots = now;
+    const r = round(), l = [...host.bots].filter(([id]) => !r || r.id !== world.rid || !isOut(r, id)).map(([i, b]) => { const p = walkerPos(b.w); return { i, x: +p.x.toFixed(2), y: +p.y.toFixed(2), f: b.w.f, k: b.w.k, w: b.w.trail }; });
+    const raw = JSON.stringify({ r: world.rid, l });
+    if (raw !== host.botsRaw) { host.botsRaw = raw; net.setShared("bots", raw); }
+  }
+}
+/** Bombs whose time has come go off (chains too): crates break into whatever they hide, power-ups burn. */
+function explodeDue(r, now) {
+  const { blasts, gone } = resolveBlasts(world.bombs, world.grid, now, null);
+  if (blasts.length) {
+    for (const f of blasts) seeBlast(r, f, world.grid); // effects first, while the crates are still there
+    world.bombs = world.bombs.filter((b) => !gone.has(b.i));
+    const breaks = new Set(), burns = new Set();
+    for (const f of blasts) for (let d = 0; d < 4; d++) if (f.a[d]) {
+      const t = tileOf(f.x + DX[d] * f.a[d], f.y + DY[d] * f.a[d]), c = world.grid[t];
+      if (c === "c") breaks.add(t); else if (ITEMS[c]) burns.add(t);
+    }
+    for (const t of burns) world.grid[t] = ".";
+    for (const t of breaks) world.grid[t] = hiddenItem(r.seed, t);
+    world.fire.push(...blasts);
+    world.dirty.boom = true;
+    if (breaks.size || burns.size) world.dirty.grid = true;
+  }
+  const before = world.fire.length;
+  world.fire = world.fire.filter((f) => now < f.at + CONFIG.flameMs + 300);
+  if (world.fire.length !== before) world.dirty.boom = true;
+}
+/** Sudden death: from sdAt a wall block drops every sdStepMs, spiralling in. Bombs under it are crushed. */
+function suddenDeath(r, now) {
+  if (now < r.sdAt) return;
+  const n = Math.min(SPIRAL.length, Math.floor((now - r.sdAt) / CONFIG.sdStepMs) + 1);
+  for (let k = 0; k < n; k++) {
+    const t = SPIRAL[k];
+    if (world.grid[t] === "#") continue;
+    world.grid[t] = "#"; world.dirty.grid = true;
+    const before = world.bombs.length;
+    world.bombs = world.bombs.filter((b) => { const [x, y] = bombTile(b, now); return tileOf(x, y) !== t; });
+    if (world.bombs.length !== before) world.dirty.boom = true;
+  }
+}
+/** A "bomb" intent: drop one where the player stands, if it has one left. */
+function applyBomb(from, msg) {
+  const r = round(), now = Date.now();
+  if (!r || r.ph !== "play" || msg.r !== r.id || isOut(r, from)) return;
+  const seat = r.players.indexOf(from), x = msg.x | 0, y = msg.y | 0;
+  if (seat < 0 || !inArena(x, y)) return;
+  const t = tileOf(x, y), c = world.grid[t], st = statsOf(world.stats, from);
+  if (c === "#" || c === "c" || bombTileSet(world.bombs, now).has(t)) return;
+  if (world.bombs.filter((b) => b.o === seat).length >= st[0]) return;
+  const p = posOf(r, from);
+  if (Math.abs(p.x - x) + Math.abs(p.y - y) > 1.6) return; // slack: the intent can arrive before the position
+  if (ITEMS[c]) { world.grid[t] = "."; give(from, c); world.dirty.grid = world.dirty.stats = true; }
+  world.bombs.push({ i: world.nb++, x, y, at: now + CONFIG.fuseMs, p: st[1], o: seat, k: null });
+  world.dirty.boom = true;
+  host.bombSet = bombTileSet(world.bombs, now);
+}
+/** A "kick" intent: a player with Kick walked into bomb i going direction d. It slides until something stops it. */
+function applyKick(from, msg) {
+  const r = round(), now = Date.now();
+  if (!r || r.ph !== "play" || msg.r !== r.id || isOut(r, from) || !(statsOf(world.stats, from)[3] > 0)) return;
+  const b = world.bombs.find((b) => b.i === msg.i), d = msg.d | 0;
+  if (!b || (b.k && now < b.k.t1) || d < 0 || d > 3) return;
+  const [bx, by] = bombTile(b, now), p = posOf(r, from);
+  if (Math.abs(p.x + DX[d] - bx) + Math.abs(p.y + DY[d] - by) > 1.2) return; // the kicker stands next to it, behind it
+  const people = new Set(r.players.filter((id) => !isOut(r, id)).map((id) => { const q = posOf(r, id); return tileOf(Math.round(q.x), Math.round(q.y)); }));
+  const others = bombTileSet(world.bombs.filter((o) => o !== b), now);
+  let n = 0;
+  for (;;) {
+    const x = bx + DX[d] * (n + 1), y = by + DY[d] * (n + 1), t = tileOf(x, y);
+    if (!inArena(x, y) || world.grid[t] !== "." || others.has(t) || people.has(t)) break;
+    n++;
+  }
+  if (!n) return;
+  b.k = { x0: bx, y0: by, t0: now, t1: now + n * CONFIG.kickTileMs }; b.x = bx + DX[d] * n; b.y = by + DY[d] * n;
+  world.dirty.boom = true;
+}
+/** A "pick" intent: the player stepped onto a power-up. */
+function applyPick(from, msg) {
+  const r = round();
+  if (!r || r.ph !== "play" || msg.r !== r.id || isOut(r, from) || !r.players.includes(from)) return;
+  const x = msg.x | 0, y = msg.y | 0;
+  if (!inArena(x, y)) return;
+  const t = tileOf(x, y), c = world.grid[t], p = posOf(r, from);
+  if (!ITEMS[c] || Math.abs(p.x - x) + Math.abs(p.y - y) > 1.6) return;
+  world.grid[t] = "."; give(from, c); world.dirty.grid = world.dirty.stats = true;
+}
+function give(id, c) {
+  const s = (world.stats[id] = [...statsOf(world.stats, id)]);
+  if (c === "B") s[0] = Math.min(CONFIG.maxBombs, s[0] + 1);
+  if (c === "F") s[1] = Math.min(CONFIG.maxFire, s[1] + 1);
+  if (c === "S") s[2] = Math.min(CONFIG.maxSpeed, s[2] + 1);
+  if (c === "K") s[3] = 1;
+}
+
+// ── BOTS (HOST) ─────────────────────────────────────────────────────────────────────
+// A bot: run from any blast line it stands in; else bomb when that breaks crates or catches a rival AND
+// there is a way out; else walk (through tiles no bomb will reach) to a power-up, a crate or a rival.
+function newBot(x, y) { return { w: newWalker(x, y), plan: [], flee: false, alarmed: false, thinkAt: 0, bombAt: 0 }; }
+const passable = (t) => { const c = world.grid[t]; return c !== "#" && c !== "c" && c !== undefined && !host.bombSet.has(t); };
+function botsTick(r, dt, now) {
+  if (r.ph !== "play" && r.ph !== "end") return;
+  host.bombSet = bombTileSet(world.bombs, now);
+  host.danger = dangerMap(r, now, []);
+  for (const [id, bot] of host.bots) {
+    if (!r.players.includes(id) || isOut(r, id)) continue;
+    const k = bot.w.k;
+    walk(bot.w, dt, stepMsOf(world.stats, id), (w, onTile) => (onTile ? botDecide(r, id, bot, now) : []), (x, y) => !passable(tileOf(x, y)));
+    if (bot.w.k !== k && r.ph === "play") { const t = tileOf(bot.w.cx, bot.w.cy), c = world.grid[t]; if (ITEMS[c]) { world.grid[t] = "."; give(id, c); world.dirty.grid = world.dirty.stats = true; } }
+  }
+}
+/** When each tile will burn: from[t]..to[t] (ms), from every bomb (chains included) and fire still burning;
+ *  wall[t] = when a sudden-death wall drops there. `extra` = bombs to imagine (a bot checking a bomb of its
+ *  own). misjudgeFor = a seat that thinks everyone else's bombs reach one tile less. */
+function dangerMap(r, now, extra, misjudgeFor = -1) {
+  const from = new Array(N).fill(Infinity), to = new Array(N).fill(-Infinity), wall = new Array(N).fill(Infinity), flame = CONFIG.flameMs;
+  const mark = (t, a, b) => { if (a < from[t]) from[t] = a; if (b > to[t]) to[t] = b; };
+  for (const f of world.fire) if (now < f.at + flame) for (const t of blastTiles(f)) mark(t, f.at, f.at + flame);
+  const list = [...world.bombs, ...extra].map((b) => ({ b, at: b.at, tile: bombTile(b, now) })), done = new Set();
+  for (;;) {
+    let e = null;
+    for (const x of list) if (!done.has(x) && (!e || x.at < e.at)) e = x;
+    if (!e) break;
+    done.add(e);
+    const f = { x: e.tile[0], y: e.tile[1], a: blastArms(e.tile[0], e.tile[1], Math.max(1, e.b.p - (misjudgeFor >= 0 && e.b.o !== misjudgeFor ? 1 : 0)), world.grid, (tx, ty) => list.some((o) => o !== e && o.tile[0] === tx && o.tile[1] === ty)) };
+    const at = Math.max(e.at, now);
+    for (const t of blastTiles(f)) mark(t, at, at + flame);
+    for (const o of list) if (!done.has(o) && inBlast(f, o.tile[0], o.tile[1])) o.at = Math.min(o.at, e.at); // it sets that one off
+  }
+  if (now > r.sdAt - 8000) SPIRAL.forEach((t, k) => { wall[t] = r.sdAt + k * CONFIG.sdStepMs; });
+  return { from, to, wall };
+}
+/** Is it safe to be in tile t from time a to time b? Is it safe to stay there a while? */
+const timeOk = (D, t, a, b) => (b + CONFIG.botSafetyMs < D.from[t] || a - CONFIG.botSafetyMs > D.to[t]) && b + CONFIG.botSafetyMs < D.wall[t];
+const safeTile = (D, t, now) => D.from[t] === Infinity && D.wall[t] > now + CONFIG.wallAheadMs;
+/** The shortest walk from (sx, sy) to a safe tile, passing each tile at a safe time. Directions, or null. */
+function escapePath(sx, sy, D, now, stepMs) {
+  const start = tileOf(sx, sy), prev = new Map([[start, null]]), depth = new Map([[start, 0]]), queue = [start];
+  for (let qi = 0; qi < queue.length; qi++) {
+    const t = queue[qi], k = depth.get(t);
+    if (t !== start && safeTile(D, t, now)) return pathTo(prev, t);
+    if (k >= 14) continue;
+    for (let d = 0; d < 4; d++) {
+      const n = t + DX[d] + DY[d] * C, arrive = now + (k + 1) * stepMs;
+      if (prev.has(n) || !passable(n) || !timeOk(D, n, arrive - stepMs / 2, arrive + stepMs / 2)) continue;
+      prev.set(n, [t, d]); depth.set(n, k + 1); queue.push(n);
+    }
+  }
+  return null;
+}
+/** No clean way out: head for the reachable tile that gets hit last (and hope). */
+function lastResort(sx, sy, D) {
+  const start = tileOf(sx, sy), prev = new Map([[start, null]]), queue = [start];
+  let best = start;
+  for (let qi = 0; qi < queue.length && qi < 60; qi++) {
+    const t = queue[qi];
+    if (Math.min(D.from[t], D.wall[t]) > Math.min(D.from[best], D.wall[best])) best = t;
+    for (let d = 0; d < 4; d++) { const n = t + DX[d] + DY[d] * C; if (!prev.has(n) && passable(n)) { prev.set(n, [t, d]); queue.push(n); } }
+  }
+  return pathTo(prev, best);
+}
+function pathTo(prev, t) { const dirs = []; for (let s = prev.get(t); s; s = prev.get(s[0])) dirs.unshift(s[1]); return dirs; }
+/** Tiles where the other players still in the round stand. */
+function rivalTiles(r, id) { return new Set(r.players.filter((o) => o !== id && !isOut(r, o)).map((o) => { const p = posOf(r, o); return tileOf(Math.round(p.x), Math.round(p.y)); })); }
+/** Walk the four arms of a blast from (x, y) of length `power`, calling hit(t, c) per tile until it returns true. */
+function scanArms(x, y, power, hit) {
+  for (let d = 0; d < 4; d++) for (let s = 1; s <= power; s++) {
+    const t = tileOf(x + DX[d] * s, y + DY[d] * s), c = world.grid[t];
+    if (c === "#" || c === undefined || hit(t, c) || c !== "." || host.bombSet.has(t)) break;
+  }
+}
+function cratesInReach(x, y, power, D) { let n = 0; scanArms(x, y, power, (t, c) => { if (c === "c" && D.from[t] === Infinity) n++; return false; }); return n; } // crates no other bomb will get
+function rivalInLine(x, y, power, rivals) { let hit = false; scanArms(x, y, power, (t) => (hit = hit || rivals.has(t))); return hit || rivals.has(tileOf(x, y)); }
+/** A bot standing on a tile picks its next step (called by walk()). */
+function botDecide(r, id, bot, now) {
+  const w = bot.w, here = tileOf(w.cx, w.cy), D = host.danger, stepMs = stepMsOf(world.stats, id), inDanger = !safeTile(D, here, now);
+  if (bot.plan.length) { // keep going while the next tile is still a good idea
+    const d = bot.plan[0], n = tileOf(w.cx + DX[d], w.cy + DY[d]);
+    if (passable(n) && (bot.flee ? timeOk(D, n, now, now + stepMs * 1.5) : !inDanger && safeTile(D, n, now))) { bot.plan.shift(); return [d]; }
+    bot.plan = [];
+  }
+  if (!inDanger) bot.flee = bot.alarmed = false;
+  else if (!bot.alarmed && !bot.flee) { bot.alarmed = true; bot.thinkAt = now + rand(...CONFIG.botReactMs); } // a moment to notice
+  if (now < bot.thinkAt) return [];
+  bot.thinkAt = now + rand(...CONFIG.botThinkMs);
+  const seat = r.players.indexOf(id);
+  if (inDanger) { // run. Now and then a bot misjudges how far the other bombs reach, like people do.
+    const seen = Math.random() < CONFIG.botMistake ? dangerMap(r, now, [], seat) : D;
+    bot.plan = escapePath(w.cx, w.cy, seen, now, stepMs) || lastResort(w.cx, w.cy, D); bot.flee = true;
+    return bot.plan.length ? [bot.plan.shift()] : [];
+  }
+  const st = statsOf(world.stats, id), rivals = rivalTiles(r, id), aggro = now > r.sdAt ? CONFIG.botAggroLate : CONFIG.botAggro;
+  if (r.ph === "play" && now >= bot.bombAt && world.bombs.filter((b) => b.o === seat).length < st[0] && !host.bombSet.has(here)
+      && (cratesInReach(w.cx, w.cy, st[1], D) > 0 || (rivalInLine(w.cx, w.cy, st[1], rivals) && Math.random() < aggro))) {
+    const esc = escapePath(w.cx, w.cy, dangerMap(r, now, [{ i: -1, x: w.cx, y: w.cy, at: now + CONFIG.fuseMs, p: st[1], o: seat, k: null }]), now, stepMs);
+    if (esc && esc.length) {
+      applyBomb(id, { r: r.id, x: w.cx, y: w.cy });
+      bot.bombAt = now + rand(...CONFIG.botBombGapMs); bot.plan = esc; bot.flee = true;
+      host.danger = dangerMap(r, now, []); // the other bots see the new bomb at once
+      return [bot.plan.shift()];
+    }
+    bot.bombAt = now + 400; // no way out from here: try somewhere else
+  }
+  bot.plan = seekPath(r, id, bot, D, rivals, st[1], now);
+  return bot.plan.length ? [bot.plan.shift()] : [];
+}
+/** Somewhere useful to go, through tiles no bomb will reach: a near power-up, a spot that lines up a rival,
+ *  a spot next to crates, any power-up, or toward the nearest rival. */
+function seekPath(r, id, bot, D, rivals, power, now) {
+  const start = tileOf(bot.w.cx, bot.w.cy), prev = new Map([[start, null]]), dist = new Map([[start, 0]]), order = [start];
+  for (let qi = 0; qi < order.length; qi++) {
+    const t = order[qi];
+    for (let d = 0; d < 4; d++) {
+      const n = t + DX[d] + DY[d] * C;
+      if (prev.has(n) || !passable(n) || !safeTile(D, n, now)) continue;
+      prev.set(n, [t, d]); dist.set(n, dist.get(t) + 1); order.push(n);
+    }
+  }
+  const items = [], work = [], lineUp = [];
+  let near = start, nearD = Infinity;
+  for (const t of order) {
+    const x = t % C, y = Math.floor(t / C);
+    if (ITEMS[world.grid[t]]) items.push(t);
+    if (t !== start && cratesInReach(x, y, power, D)) work.push(t);
+    if (t !== start && rivalInLine(x, y, power, rivals)) lineUp.push(t);
+    for (const rt of rivals) { const md = Math.abs((rt % C) - x) + Math.abs(Math.floor(rt / C) - y); if (md < nearD) { nearD = md; near = t; } }
+  }
+  let goal = items.find((t) => dist.get(t) <= 8);
+  if (goal === undefined && lineUp.length && (!work.length || now > r.sdAt || Math.random() < CONFIG.botHunt)) goal = lineUp[0];
+  if (goal === undefined && work.length) goal = work[Math.floor(Math.random() * Math.min(3, work.length))];
+  if (goal === undefined) goal = items[0] ?? near;
+  if (goal === start) { const opts = order.slice(1, 7); if (!opts.length) return []; goal = opts[Math.floor(Math.random() * opts.length)]; } // nothing to do here: mill about
+  return pathTo(prev, goal);
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+const me = { r: 0, w: null, sent: "", lastSend: 0, pending: [], taken: new Map(), kickAt: 0, wantBomb: false, ready: 0 };
+let myName = "", myColor = COLORS[0];
+try { myName = localStorage.getItem("mpa-name") || ""; } catch {}
+if (!myName) myName = ["Lucky", "Sneaky", "Turbo", "Tiny", "Mega", "Zippy"][Math.floor(Math.random() * 6)] + " " + ["Otter", "Fox", "Panda", "Gecko", "Moose", "Yak"][Math.floor(Math.random() * 6)];
+/** Two players picked the same color at once (the room can look empty as you join), or a bot has mine: the later sessionId picks again. */
+function fixColor() {
+  const ps = S.entities.players || {}, botColors = (round()?.bots || []).map((b) => b.c);
+  if (!Object.entries(ps).some(([id, p]) => id < net.sessionId && p.c === myColor) && !botColors.includes(myColor)) return;
+  const taken = new Set([...Object.entries(ps).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...botColors]);
+  const free = COLORS.find((c) => !taken.has(c));
+  if (free) { myColor = free; net.me.set("c", free); }
+}
+/** A new round, or I just took a bot's seat: to my start tile (or watching, if I'm not in the round). */
+function resetMe(r) {
+  const seat = r.players.indexOf(net.sessionId);
+  Object.assign(me, { r: r.id, pending: [], sent: "", w: seat >= 0 ? newWalker(...startTile(r, net.sessionId)) : null });
+  me.taken.clear();
+  publish(true);
+}
+function myTick(r, dt) {
+  const now = Date.now(), seat = r.players.indexOf(net.sessionId);
+  if (r.id !== me.r || (!me.w && seat >= 0)) resetMe(r);
+  if (me.w && !isOut(r, net.sessionId) && (r.ph === "play" || r.ph === "end")) {
+    const k = me.w.k;
+    walk(me.w, dt, stepMsOf(V.stats, net.sessionId), () => heldDirs(), (x, y, d) => blockedForMe(r, x, y, d, now));
+    if (me.w.k !== k && r.ph === "play") pickHere(r);
+    if (me.wantBomb) dropBomb(r);
+  }
+  me.wantBomb = false;
+  me.pending = me.pending.filter((p) => performance.now() - p.born < 900 && !V.bombs.some((b) => b.x === p.x && b.y === p.y && b.o === seat));
+  for (const [t, at] of me.taken) if (performance.now() - at > 1500) me.taken.delete(t);
+  publish(false);
+}
+function publish(force) {
+  const now = performance.now();
+  if (!me.w || (!force && now - me.lastSend < CONFIG.sendMs)) return;
+  const p = walkerPos(me.w), v = JSON.stringify({ r: me.r, x: +p.x.toFixed(2), y: +p.y.toFixed(2), f: me.w.f, k: me.w.k, w: me.w.trail });
+  if (v === me.sent) return;
+  me.sent = v; me.lastSend = now;
+  net.me.set("p", v);
+}
+const liveBombAt = (r, x, y, now) => V.bombs.find((b) => !fx.exploded.has(r.id + ":" + b.i) && ((t) => t[0] === x && t[1] === y)(bombTile(b, now)));
+function blockedForMe(r, x, y, d, now) {
+  const c = inArena(x, y) ? V.grid[tileOf(x, y)] : "#";
+  if (c === "#" || c === "c" || c === undefined) return true;
+  if (me.pending.some((p) => p.x === x && p.y === y)) return true;
+  const b = liveBombAt(r, x, y, now);
+  if (!b) return false;
+  if (statsOf(V.stats, net.sessionId)[3] > 0 && performance.now() - me.kickAt > 300 && !(b.k && now < b.k.t1)) { // Kick: send it sliding
+    me.kickAt = performance.now(); sfx("kick");
+    if (amHost) applyKick(net.sessionId, { r: r.id, i: b.i, d }); else net.send("kick", { r: r.id, i: b.i, d });
+  }
+  return true;
+}
+function dropBomb(r) {
+  if (r.ph !== "play" || !me.w || isOut(r, net.sessionId)) return;
+  const [x, y] = walkerTile(me.w), now = Date.now(), seat = r.players.indexOf(net.sessionId), st = statsOf(V.stats, net.sessionId);
+  if (liveBombAt(r, x, y, now) || me.pending.some((p) => p.x === x && p.y === y)) return;
+  if (V.bombs.filter((b) => b.o === seat && !fx.exploded.has(r.id + ":" + b.i)).length + me.pending.length >= st[0]) return;
+  sfx("place");
+  if (amHost) applyBomb(net.sessionId, { r: r.id, x, y });
+  else { net.send("bomb", { r: r.id, x, y }); me.pending.push({ x, y, at: now + CONFIG.fuseMs, born: performance.now() }); } // shown at once, until the host's comes back
+}
+function pickHere(r) {
+  const x = me.w.cx, y = me.w.cy, t = tileOf(x, y), c = V.grid[t];
+  if (!ITEMS[c] || me.taken.has(t)) return;
+  me.taken.set(t, performance.now());
+  sfx("pickup"); floatText(x, y, ITEM_TEXT[c], ITEM_COLOR[c]); sparkle(t, ITEM_COLOR[c]);
+  if (amHost) applyPick(net.sessionId, { r: r.id, x, y }); else net.send("pick", { r: r.id, x, y });
+}
+
+// ── EFFECTS ─────────────────────────────────────────────────────────────────────────
+// Everything here is decoration, rebuilt from state: what each screen sees change, it animates.
+const fx = { r: -1, ph: "", count: 0, seen: new Set(), exploded: new Set(), local: [], breaks: new Map(), drops: new Map(), out: new Set(), grid: "", gr: -1,
+  shake: 0, parts: [], texts: [], feed: [], ghosts: [] };
+let V = { grid: EMPTY_GRID, gr: 0, bombs: [], fire: [], stats: {}, nb: 1 }; // this frame's view of the world
+function clientTick(r, dt) {
+  const t = Date.now(), now = performance.now();
+  if (fx.r !== r.id) { // a new round: forget the last one's effects
+    Object.assign(fx, { r: r.id, local: [], ghosts: [], grid: "", out: new Set(r.out.map((o) => o[0])) });
+    fx.seen.clear(); fx.exploded.clear(); fx.breaks.clear(); fx.drops.clear();
+  }
+  if (!amHost) { // bombs whose time came: set them off here too, at the same moment as everyone else
+    const { blasts, gone } = resolveBlasts(V.bombs, V.grid, t, (b) => fx.exploded.has(r.id + ":" + b.i));
+    for (const i of gone) fx.exploded.add(r.id + ":" + i);
+    for (const f of blasts) { fx.local.push(f); seeBlast(r, f, V.grid); }
+    for (const f of V.fire) seeBlast(r, f, V.grid); // any we didn't see coming (a kick, a late join)
+    fx.local = fx.local.filter((f) => t < f.at + CONFIG.flameMs);
+  }
+  for (const [i, at] of fx.breaks) if (now - at > 1500) fx.breaks.delete(i);
+  diffGrid(r);
+  for (const [id, by] of r.out) { // newly caught players
+    if (fx.out.has(id)) continue;
+    fx.out.add(id);
+    const p = drawPosOf(r, id), who = id === net.sessionId ? "You" : nameOf(r, id), killer = r.players[by];
+    fx.ghosts.push({ x: p.x, y: p.y, c: colorOf(r, id), born: now });
+    burst(p.x, p.y, colorOf(r, id), 26);
+    fx.feed.push({ text: by === -2 ? `${who} left` : by === -1 ? `${who} got crushed` : killer === id ? `${who} blew up` : `${killer === net.sessionId ? "You" : nameOf(r, killer)} caught ${who}`, c: colorOf(r, id), born: now });
+    if (fx.feed.length > 4) fx.feed.shift();
+    sfx(id === net.sessionId ? "lose" : "pop");
+  }
+  const phase = r.ph + r.id;
+  if (fx.ph !== phase) {
+    if (fx.ph && r.ph === "play") sfx("go");
+    if (fx.ph && (r.ph === "end" || r.ph === "over") && r.win) { const p = drawPosOf(r, r.win); for (let i = 0; i < 3; i++) burst(p.x, p.y, COLORS[i * 3 % COLORS.length], 24); if (r.win === net.sessionId) sfx("win"); }
+    fx.ph = phase;
+  }
+  if (r.ph === "count") { const n = Math.ceil((r.startAt - t) / 1000); if (n !== fx.count && n > 0) sfx("tick"); fx.count = n; }
+  // other people (and, on screens that don't run them, the bots) walk smoothly between snapshots
+  const bots = botSnaps();
+  for (const id of r.players) {
+    if (id === net.sessionId) continue;
+    const src = isBot(r, id) ? (amHost ? null : bots && bots.m.get(id)) : cached("p:" + id, S.entities.players?.[id]?.p, null);
+    if (src) trackView(id, src, stepMsOf(V.stats, id), dt);
+  }
+}
+/** The `bots` field: each bot's latest snapshot by id. */
+const botSnaps = () => cached("bots", S.shared.bots, null, (o) => ({ r: o.r, m: new Map((o.l || []).map((e) => [e.i, { ...e, r: o.r }])) }));
+/** A blast seen for the first time on this screen: sparks, smoke, shake, sound, and its crates breaking. */
+function seeBlast(r, f, grid) {
+  const key = r.id + ":" + f.i;
+  if (fx.seen.has(key)) return;
+  fx.seen.add(key);
+  for (const t of blastTiles(f)) sparks(t % C, Math.floor(t / C), 3);
+  for (let i = 0; i < 5; i++) addPart(f.x + 0.5 + rand(-0.3, 0.3), f.y + 0.5 + rand(-0.3, 0.3), rand(-0.6, 0.6), rand(-1.4, -0.3), rand(0.6, 1.1), "#8c86b0", rand(0.25, 0.45), 0, 1);
+  const mine = me.w && !ATTRACT ? walkerPos(me.w) : { x: f.x + 4, y: f.y }, dist = Math.hypot(mine.x - f.x, mine.y - f.y);
+  fx.shake = Math.min(ATTRACT ? 5 : 16, fx.shake + 9 / (1 + dist * 0.3));
+  sfx("boom", 1 / (1 + dist * 0.12));
+  for (let d = 0; d < 4; d++) if (f.a[d]) {
+    const t = tileOf(f.x + DX[d] * f.a[d], f.y + DY[d] * f.a[d]);
+    if (grid[t] === "c" && !fx.breaks.has(t)) { fx.breaks.set(t, performance.now()); debris(t); }
+  }
+}
+/** What changed in the grid since last frame: crates broke, power-ups taken or revealed, walls dropped. */
+function diffGrid(r) {
+  const s = typeof V.grid === "string" ? V.grid : V.grid.join("");
+  if (fx.grid && fx.gr === V.gr && s !== fx.grid) for (let t = 0; t < N; t++) {
+    const a = fx.grid[t], b = s[t];
+    if (a === b) continue;
+    if (a === "c" && !fx.breaks.has(t)) debris(t);
+    if (ITEMS[a] && b === ".") sparkle(t, ITEM_COLOR[a]);
+    if (ITEMS[b]) sparkle(t, ITEM_COLOR[b]);
+    if (b === "#") { fx.drops.set(t, performance.now()); sfx("thud"); fx.shake = Math.max(fx.shake, 3); }
+  }
+  fx.grid = s; fx.gr = V.gr;
+}
+function addPart(x, y, vx, vy, life, c, size, g = 0, kind = 0) { if (fx.parts.length < 700) fx.parts.push({ x, y, vx, vy, life, max: life, c, size, g, kind }); }
+function sparks(x, y, n) { for (let i = 0; i < n; i++) { const a = rand(0, 6.283), s = rand(1, 4.5); addPart(x + 0.5, y + 0.5, Math.cos(a) * s, Math.sin(a) * s, rand(0.25, 0.5), Math.random() < 0.5 ? "#ffd23f" : "#ff8c42", rand(0.06, 0.12)); } }
+function debris(t) { const x = t % C, y = Math.floor(t / C); for (let i = 0; i < 10; i++) addPart(x + 0.5 + rand(-0.3, 0.3), y + 0.5 + rand(-0.3, 0.2), rand(-3.5, 3.5), rand(-5, -1.5), rand(0.5, 0.9), Math.random() < 0.5 ? "#c98a45" : "#8f5a2c", rand(0.1, 0.2), 14); }
+function sparkle(t, c) { const x = t % C, y = Math.floor(t / C); for (let i = 0; i < 12; i++) { const a = (i / 12) * 6.283; addPart(x + 0.5, y + 0.5, Math.cos(a) * 2.6, Math.sin(a) * 2.6, 0.45, i % 2 ? "#fff" : c, 0.09); } }
+function burst(x, y, c, n) { for (let i = 0; i < n; i++) { const a = rand(0, 6.283), s = rand(1.5, 6); addPart(x + 0.5, y + 0.5, Math.cos(a) * s, Math.sin(a) * s - 2, rand(0.5, 1), Math.random() < 0.3 ? "#fff" : c, rand(0.08, 0.16), 6); } }
+function floatText(x, y, text, c) { fx.texts.push({ x, y, text, c, born: performance.now() }); }
+
+// Sounds, made on the fly with WebAudio (no files).
+let AC = null, noiseBuf = null, lastBoom = 0;
+function unlockAudio() {
+  if (AC || ATTRACT) return;
+  try { AC = new AudioContext(); noiseBuf = AC.createBuffer(1, AC.sampleRate, AC.sampleRate); const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; } catch { AC = null; }
+}
+function tone(f0, f1, ms, type, vol, delay = 0) {
+  const t = AC.currentTime + delay, o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + ms / 1000);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + ms / 1000);
+  o.connect(g).connect(AC.destination); o.start(t); o.stop(t + ms / 1000 + 0.02);
+}
+function noise(ms, vol, freq) {
+  const t = AC.currentTime, src = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  src.buffer = noiseBuf; f.type = "lowpass"; f.frequency.setValueAtTime(freq, t); f.frequency.exponentialRampToValueAtTime(80, t + ms / 1000);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + ms / 1000);
+  src.connect(f).connect(g).connect(AC.destination); src.start(t); src.stop(t + ms / 1000);
+}
+function sfx(kind, k = 1) {
+  if (!AC) return;
+  if (kind === "boom") { if (performance.now() - lastBoom < 70) return; lastBoom = performance.now(); noise(520, 0.5 * k, 1400); tone(130, 38, 380, "sine", 0.45 * k); }
+  else if (kind === "place") tone(240, 120, 90, "sine", 0.18);
+  else if (kind === "kick") tone(320, 160, 80, "square", 0.06);
+  else if (kind === "pickup") { tone(660, 990, 90, "triangle", 0.12); tone(990, 1480, 130, "triangle", 0.1, 0.08); }
+  else if (kind === "lose") tone(480, 90, 700, "sawtooth", 0.1);
+  else if (kind === "pop") tone(560, 180, 180, "square", 0.05);
+  else if (kind === "thud") noise(140, 0.12, 400);
+  else if (kind === "tick") tone(880, 880, 90, "sine", 0.08);
+  else if (kind === "go") { tone(660, 660, 110, "triangle", 0.12); tone(990, 990, 200, "triangle", 0.12, 0.1); }
+  else if (kind === "win") [523, 659, 784, 1046].forEach((f, i) => tone(f, f, 220, "triangle", 0.12, i * 0.11));
+}
+
+// ── DRAW ────────────────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const cv = $("game"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1, SAFE_TOP = 0, SAFE_BOTTOM = 0, T = 32, OX = 0, OY = 0, chipRows = 1;
+function fit() {
+  DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  const cs = getComputedStyle($("safe")); SAFE_TOP = parseFloat(cs.paddingTop) || 0; SAFE_BOTTOM = parseFloat(cs.paddingBottom) || 0;
+}
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+/** Tile size T and where the arena sits (OX, OY): room on top for the scores, below or beside for the touch controls. */
+function layout(r) {
+  const portrait = H > W * 1.05, perRow = Math.max(1, Math.floor((W - 24) / 124));
+  chipRows = Math.min(2, Math.ceil(r.players.length / perRow));
+  const top = ATTRACT ? 10 : SAFE_TOP + 36 + chipRows * 30, bottom = ATTRACT ? 10 : SAFE_BOTTOM + (touchUI ? (portrait ? 236 : 28) : 30);
+  const sides = touchUI && !portrait && !ATTRACT ? 380 : 20;
+  T = Math.max(8, Math.floor(Math.min((W - sides) / C, (H - top - bottom) / R)));
+  OX = Math.round((W - T * C) / 2);
+  OY = Math.round(top + Math.max(0, H - top - bottom - T * R) * (portrait ? 0.2 : 0.5));
+}
+function rr(x, y, w, h, r) { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); }
+function draw(r, dt, now) {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const bg = ctx.createLinearGradient(0, 0, 0, H); bg.addColorStop(0, "#1f1944"); bg.addColorStop(1, "#0e0c1f");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  if (!r) { ctx.fillStyle = "#a99fd6"; ctx.font = "600 16px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillText("Setting up the arena…", W / 2, H / 2); return; }
+  layout(r);
+  const t = Date.now();
+  fx.shake *= Math.exp(-dt * 9);
+  ctx.setTransform(DPR, 0, 0, DPR, DPR * (Math.random() - 0.5) * fx.shake, DPR * (Math.random() - 0.5) * fx.shake);
+  drawArena(r, t, now);
+  drawBombs(r, t, now);
+  drawFlames(t);
+  drawPlayers(r, now);
+  drawParticles(dt, now);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  drawTopBar(r, t); drawStats(r); drawFeed(now); drawBanners(r, t);
+}
+function drawBlock(px, py, s, top, side, scale = 1, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  if (scale !== 1) { ctx.translate(px + s / 2, py + s / 2); ctx.scale(scale, scale); ctx.translate(-px - s / 2, -py - s / 2); }
+  const m = s * 0.03;
+  ctx.fillStyle = side; rr(px + m, py + m, s - 2 * m, s - 2 * m, s * 0.16); ctx.fill();
+  ctx.fillStyle = top; rr(px + m, py + m, s - 2 * m, s * 0.74, s * 0.16); ctx.fill();
+  ctx.fillStyle = "#ffffff1f"; ctx.fillRect(px + s * 0.22, py + s * 0.13, s * 0.56, s * 0.07);
+  ctx.restore();
+}
+function drawCrate(px, py, s) {
+  const m = s * 0.07, w = s - 2 * m;
+  ctx.fillStyle = "#00000040"; ctx.fillRect(px + m, py + s - m * 1.4, w, m * 1.2);
+  ctx.fillStyle = "#7a4a24"; rr(px + m, py + m, w, w, s * 0.12); ctx.fill();
+  ctx.fillStyle = "#c98a45"; rr(px + m, py + m, w, w * 0.86, s * 0.12); ctx.fill();
+  ctx.strokeStyle = "#8f5a2c"; ctx.lineWidth = Math.max(1, s * 0.07);
+  ctx.strokeRect(px + s * 0.22, py + s * 0.2, s * 0.56, s * 0.44);
+  ctx.beginPath(); ctx.moveTo(px + s * 0.22, py + s * 0.2); ctx.lineTo(px + s * 0.78, py + s * 0.64); ctx.stroke();
+  ctx.fillStyle = "#ffffff30"; ctx.fillRect(px + m + 2, py + m + 1, w - 4, Math.max(1, s * 0.05));
+}
+/** A power-up icon at (x, y), k px across. */
+function icon(c, x, y, k) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(k / 20, k / 20);
+  if (c === "B") { ctx.fillStyle = "#15131f"; ctx.beginPath(); ctx.arc(-1, 2, 7.5, 0, 6.283); ctx.fill(); ctx.strokeStyle = "#f3e2b8"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(3, -4); ctx.quadraticCurveTo(6, -9, 9, -8); ctx.stroke(); ctx.fillStyle = "#ffd23f"; ctx.beginPath(); ctx.arc(9, -8, 2.4, 0, 6.283); ctx.fill(); }
+  else if (c === "F") { ctx.fillStyle = "#ffd23f"; ctx.beginPath(); ctx.moveTo(0, -10); ctx.bezierCurveTo(8, -2, 8, 9, 0, 9); ctx.bezierCurveTo(-8, 9, -8, -2, 0, -10); ctx.fill(); ctx.fillStyle = "#fff6c9"; ctx.beginPath(); ctx.moveTo(0, -2); ctx.bezierCurveTo(4, 2, 4, 8, 0, 8); ctx.bezierCurveTo(-4, 8, -4, 2, 0, -2); ctx.fill(); }
+  else if (c === "S") { ctx.fillStyle = "#ffe14d"; ctx.beginPath(); ctx.moveTo(3, -10); ctx.lineTo(-6, 2); ctx.lineTo(0, 2); ctx.lineTo(-3, 10); ctx.lineTo(7, -3); ctx.lineTo(1, -3); ctx.closePath(); ctx.fill(); }
+  else if (c === "K") { // a boot kicking, with speed lines
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.moveTo(-4, -10); ctx.lineTo(3, -10); ctx.lineTo(3, -1); ctx.lineTo(8, 1); ctx.quadraticCurveTo(11, 2, 11, 6); ctx.lineTo(11, 8); ctx.lineTo(-4, 8); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#3a2a66"; ctx.fillRect(-4, 6, 15, 2.5); ctx.fillRect(-4, -10, 7, 2.5);
+    ctx.strokeStyle = "#ffffffaa"; ctx.lineWidth = 1.8; ctx.lineCap = "round"; ctx.beginPath(); for (const y of [-5, 0, 5]) { ctx.moveTo(-11, y); ctx.lineTo(-7, y); } ctx.stroke(); }
+  ctx.restore();
+}
+function drawItem(px, py, s, c, now) {
+  const bob = Math.sin(now / 230 + px * 0.1) * s * 0.05, m = s * 0.13;
+  ctx.fillStyle = ITEM_COLOR[c] + "44"; ctx.beginPath(); ctx.arc(px + s / 2, py + s / 2, s * 0.48, 0, 6.283); ctx.fill();
+  ctx.fillStyle = ITEM_COLOR[c]; rr(px + m, py + m + bob, s - 2 * m, s - 2 * m, s * 0.2); ctx.fill();
+  ctx.strokeStyle = "#ffffffaa"; ctx.lineWidth = Math.max(1, s * 0.05); ctx.stroke();
+  icon(c, px + s / 2, py + s / 2 + bob, s * 0.56);
+}
+function drawArena(r, t, now) {
+  ctx.fillStyle = "#0b0918"; rr(OX - 6, OY - 6, T * C + 12, T * R + 12, 12); ctx.fill();
+  for (let y = 1; y < R - 1; y++) for (let x = 1; x < C - 1; x++) { ctx.fillStyle = (x + y) % 2 ? "#2d2a56" : "#332f60"; ctx.fillRect(OX + x * T, OY + y * T, T, T); }
+  if (r.ph === "play" && t > r.sdAt - 2500) { // sudden death: the next tiles to fill glow red
+    const k0 = Math.max(0, Math.floor((t - r.sdAt) / CONFIG.sdStepMs) + 1), pulse = 0.35 + 0.25 * Math.sin(now / 90);
+    for (let k = k0; k < Math.min(SPIRAL.length, k0 + 6); k++) { const i = SPIRAL[k]; if (V.grid[i] === "#") continue; ctx.fillStyle = `rgba(255,70,90,${pulse * (1 - (k - k0) / 7)})`; ctx.fillRect(OX + (i % C) * T, OY + Math.floor(i / C) * T, T, T); }
+  }
+  for (let y = 0; y < R; y++) for (let x = 0; x < C; x++) {
+    const i = tileOf(x, y), c = V.grid[i], px = OX + x * T, py = OY + y * T;
+    if (x === 0 || y === 0 || x === C - 1 || y === R - 1) drawBlock(px, py, T, "#3d3775", "#27224f");
+    else if (c === "#") {
+      if (isPillar(x, y)) drawBlock(px, py, T, "#5f58a8", "#3b3672");
+      else { const at = fx.drops.get(i), u = at ? Math.min(1, (now - at) / 240) : 1; drawBlock(px, py, T, "#b04a6a", "#6c2644", 1 + (1 - u) * (1 - u) * 1.3, 0.3 + 0.7 * u); }
+    }
+    else if (c === "c") { if (!fx.breaks.has(i)) drawCrate(px, py, T); }
+    else if (ITEMS[c] && !me.taken.has(i)) drawItem(px, py, T, c, now);
+  }
+}
+function drawBombs(r, t, now) {
+  const list = V.bombs.filter((b) => !fx.exploded.has(r.id + ":" + b.i)).concat(me.pending);
+  for (const b of list) {
+    const p = bombPos(b, t), u = Math.min(1, Math.max(0, 1 - (b.at - t) / CONFIG.fuseMs));
+    const cx = OX + (p.x + 0.5) * T, cy = OY + (p.y + 0.5) * T + T * 0.04, rad = T * 0.33 * (1 + Math.sin(now / (110 - 75 * u)) * (0.05 + 0.07 * u));
+    ctx.fillStyle = "#00000055"; ctx.beginPath(); ctx.ellipse(cx, OY + (p.y + 0.86) * T, rad * 0.9, rad * 0.32, 0, 0, 6.283); ctx.fill();
+    const g = ctx.createRadialGradient(cx - rad * 0.4, cy - rad * 0.4, rad * 0.1, cx, cy, rad);
+    g.addColorStop(0, u > 0.72 && Math.floor(now / 90) % 2 ? "#ff6b6b" : "#55507a"); g.addColorStop(1, "#13111d");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, rad, 0, 6.283); ctx.fill();
+    ctx.fillStyle = "#ffffff40"; ctx.beginPath(); ctx.ellipse(cx - rad * 0.35, cy - rad * 0.4, rad * 0.22, rad * 0.14, -0.6, 0, 6.283); ctx.fill();
+    const len = 1 - u * 0.7, fx0 = cx + rad * 0.45, fy0 = cy - rad * 0.8, fx1 = fx0 + rad * 0.55 * len, fy1 = fy0 - rad * 0.6 * len;
+    ctx.strokeStyle = "#e8d6a8"; ctx.lineWidth = Math.max(1.5, T * 0.07); ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(fx0, fy0); ctx.quadraticCurveTo(fx0 + rad * 0.1, fy1, fx1, fy1); ctx.stroke();
+    const sp = T * (0.08 + Math.random() * 0.05);
+    ctx.fillStyle = "#ff8c42"; ctx.beginPath(); ctx.arc(fx1, fy1, sp * 1.7, 0, 6.283); ctx.fill();
+    ctx.fillStyle = "#ffe066"; ctx.beginPath(); ctx.arc(fx1, fy1, sp, 0, 6.283); ctx.fill();
+  }
+}
+function drawFlames(t) {
+  const list = [...V.fire];
+  for (const f of fx.local) if (!list.some((g) => g.i === f.i)) list.push(f); // blasts this screen set off before the host's arrived
+  ctx.lineCap = "round";
+  for (const f of list) {
+    const u = (t - f.at) / CONFIG.flameMs;
+    if (u < 0 || u >= 1) continue;
+    const grow = Math.min(1, u / 0.12), fade = u > 0.55 ? 1 - (u - 0.55) / 0.45 : 1, cx = OX + (f.x + 0.5) * T, cy = OY + (f.y + 0.5) * T;
+    for (const [k, col] of [[0.92, "#ff4d1a"], [0.66, "#ffa21a"], [0.36, "#fff3b0"]]) {
+      ctx.globalAlpha = Math.min(1, fade * 1.4); ctx.strokeStyle = col; ctx.fillStyle = col;
+      ctx.lineWidth = T * k * (0.7 + 0.3 * fade) * (0.92 + 0.08 * Math.sin(t / 30 + k * 9));
+      ctx.beginPath();
+      for (let d = 0; d < 4; d++) { ctx.moveTo(cx, cy); ctx.lineTo(cx + DX[d] * f.a[d] * T * grow, cy + DY[d] * f.a[d] * T * grow); }
+      ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, T * k * 0.58, 0, 6.283); ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+/** Where to draw a player on this screen. */
+function drawPosOf(r, id) {
+  if (id === net.sessionId && me.w) return walkerPos(me.w);
+  if (amHost && host.bots.has(id)) return walkerPos(host.bots.get(id).w);
+  const v = views.get(id);
+  if (v && v.r === r.id) return v;
+  const s = startTile(r, id);
+  return { x: s[0], y: s[1] };
+}
+function drawPlayers(r, now) {
+  const live = new Set(livePlayers()), list = [];
+  for (const id of r.players) {
+    if (isOut(r, id) || (!isBot(r, id) && !live.has(id))) continue; // a closed tab lingers in state: never draw it
+    let f = 2, moving = false;
+    const p = drawPosOf(r, id);
+    if (id === net.sessionId) { if (!me.w) continue; f = me.w.f; moving = me.w.t > 0; }
+    else if (amHost && host.bots.has(id)) { const w = host.bots.get(id).w; f = w.f; moving = w.t > 0; }
+    else { const v = views.get(id); if (v && v.r === r.id) { f = v.f; moving = v.moving; } }
+    list.push({ id, x: p.x, y: p.y, f, moving, c: colorOf(r, id), name: id === net.sessionId ? "You" : nameOf(r, id), mine: id === net.sessionId });
+  }
+  list.sort((a, b) => a.y - b.y);
+  for (const p of list) drawPlayer(p, now);
+  for (const g of fx.ghosts) { // caught: a ghost floats up and fades
+    const u = (now - g.born) / 1300;
+    if (u > 1) continue;
+    const gx = OX + (g.x + 0.5) * T, gy = OY + (g.y + 0.5 - u * 1.2) * T;
+    ctx.globalAlpha = 0.8 * (1 - u); ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.arc(gx, gy, T * 0.3, Math.PI, 0); ctx.lineTo(gx + T * 0.3, gy + T * 0.3); ctx.lineTo(gx - T * 0.3, gy + T * 0.3); ctx.fill();
+    ctx.fillStyle = g.c; ctx.beginPath(); ctx.arc(gx - T * 0.1, gy - T * 0.03, T * 0.05, 0, 6.283); ctx.arc(gx + T * 0.1, gy - T * 0.03, T * 0.05, 0, 6.283); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+function drawPlayer(p, now) {
+  const cx = OX + (p.x + 0.5) * T, base = OY + (p.y + 0.5) * T, bob = p.moving ? Math.abs(Math.sin(now / 65)) * T * 0.08 : Math.sin(now / 420) * T * 0.015;
+  const cy = base - T * 0.06 - bob, rad = T * 0.36;
+  ctx.fillStyle = "#00000060"; ctx.beginPath(); ctx.ellipse(cx, base + T * 0.3, rad * 0.85, rad * 0.3, 0, 0, 6.283); ctx.fill();
+  ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(cx, cy, rad, 0, 6.283); ctx.fill();
+  ctx.fillStyle = "#00000033"; ctx.beginPath(); ctx.arc(cx, cy, rad, 0.15 * Math.PI, 0.85 * Math.PI); ctx.fill();
+  ctx.fillStyle = "#ffffff38"; ctx.beginPath(); ctx.ellipse(cx - rad * 0.3, cy - rad * 0.45, rad * 0.32, rad * 0.18, -0.5, 0, 6.283); ctx.fill();
+  if (p.mine && !ATTRACT) { ctx.strokeStyle = "#fff"; ctx.lineWidth = Math.max(1.5, T * 0.07); ctx.beginPath(); ctx.arc(cx, cy, rad + T * 0.03, 0, 6.283); ctx.stroke(); }
+  if (p.f !== 0) { // eyes look the way it faces (from behind when going up)
+    const ex = DX[p.f] * rad * 0.32, ey = DY[p.f] * rad * 0.2 - rad * 0.12, sep = p.f === 2 ? rad * 0.36 : rad * 0.22;
+    for (const s of p.f === 2 ? [-1, 1] : [p.f === 1 ? 1 : -1, p.f === 1 ? 0.2 : -0.2]) {
+      const x = cx + ex + s * sep, y = cy + ey;
+      ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.ellipse(x, y, rad * 0.2, rad * 0.25, 0, 0, 6.283); ctx.fill();
+      ctx.fillStyle = "#1a1530"; ctx.beginPath(); ctx.arc(x + DX[p.f] * rad * 0.08, y + DY[p.f] * rad * 0.06, rad * 0.11, 0, 6.283); ctx.fill();
+    }
+  }
+  if (!ATTRACT) {
+    ctx.font = `700 ${Math.max(10, Math.round(T * 0.34))}px system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    ctx.lineWidth = 3; ctx.strokeStyle = "#0e0c1fcc"; ctx.strokeText(p.name, cx, cy - rad - T * 0.12);
+    ctx.fillStyle = p.mine ? "#fff" : p.c; ctx.fillText(p.name, cx, cy - rad - T * 0.12);
+  }
+}
+function drawParticles(dt, now) {
+  for (let i = fx.parts.length - 1; i >= 0; i--) {
+    const p = fx.parts[i];
+    p.life -= dt; if (p.life <= 0) { fx.parts.splice(i, 1); continue; }
+    p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 1 - dt * 2; if (!p.g) p.vy *= 1 - dt * 2;
+    const k = p.life / p.max, x = OX + p.x * T, y = OY + p.y * T;
+    if (p.kind === 1) { ctx.globalAlpha = 0.35 * k; ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(x, y, p.size * T * (1 + (1 - k) * 1.6), 0, 6.283); ctx.fill(); }
+    else { ctx.globalAlpha = Math.min(1, k * 1.5); ctx.fillStyle = p.c; const s = p.size * T; ctx.fillRect(x - s / 2, y - s / 2, s, s); }
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "center"; ctx.font = `800 ${Math.max(12, Math.round(T * 0.42))}px system-ui, sans-serif`;
+  fx.texts = fx.texts.filter((f) => now - f.born < 1100);
+  for (const f of fx.texts) { const u = (now - f.born) / 1100; ctx.globalAlpha = 1 - u * u; ctx.lineWidth = 3; ctx.strokeStyle = "#0e0c1f"; const x = OX + (f.x + 0.5) * T, y = OY + (f.y - 0.2 - u) * T; ctx.strokeText(f.text, x, y); ctx.fillStyle = f.c; ctx.fillText(f.text, x, y); }
+  ctx.globalAlpha = 1;
+}
+const clock = (ms) => { const s = Math.ceil(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+/** Top bar: the round and its timer, then a chip per player with its round wins. */
+function drawTopBar(r, t) {
+  if (ATTRACT) return;
+  let label = `Round ${r.rn} · first to ${CONFIG.winsToWin} wins`, color = "#f3eefc";
+  if (r.ph === "play") {
+    const left = r.sdAt - t;
+    if (left > 0) { label = `Round ${r.rn} · ${clock(left)}`; if (left < 10000) color = Math.floor(t / 300) % 2 ? "#ffd23f" : "#ff8c42"; }
+    else { label = "Sudden death: the walls close in"; color = "#ff5d73"; }
+  } else if (r.ph === "end") label = `Round ${r.rn} over`;
+  else if (r.ph === "over") label = "Match over";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = "800 15px system-ui, sans-serif"; ctx.fillStyle = color;
+  ctx.fillText(label, W / 2, SAFE_TOP + 18);
+  const perRow = Math.ceil(r.players.length / chipRows), cw = Math.min(124, (W - 16) / perRow) - 6;
+  r.players.forEach((id, k) => {
+    const row = Math.floor(k / perRow), inRow = Math.min(perRow, r.players.length - row * perRow), col = k - row * perRow;
+    const x = W / 2 - (inRow * (cw + 6)) / 2 + col * (cw + 6), y = SAFE_TOP + 36 + row * 30, out = isOut(r, id) && r.ph === "play";
+    ctx.globalAlpha = out ? 0.4 : 1;
+    ctx.fillStyle = id === net.sessionId ? "#ffffff26" : "#ffffff12"; rr(x, y, cw, 24, 12); ctx.fill();
+    ctx.fillStyle = colorOf(r, id); ctx.beginPath(); ctx.arc(x + 12, y + 12, 6, 0, 6.283); ctx.fill();
+    const pips = CONFIG.winsToWin <= 5 ? CONFIG.winsToWin : 0, wins = r.wins[id] || 0, pw = pips ? pips * 9 + 4 : 22;
+    ctx.font = "700 12px system-ui, sans-serif"; ctx.textAlign = "left"; ctx.fillStyle = "#f3eefc";
+    let name = id === net.sessionId ? "You" : nameOf(r, id);
+    while (name.length > 1 && ctx.measureText(name).width > cw - 26 - pw) name = name.slice(0, -1);
+    ctx.fillText(name, x + 22, y + 12.5);
+    if (pips) for (let i = 0; i < pips; i++) { ctx.fillStyle = i < wins ? "#ffd23f" : "#ffffff30"; ctx.beginPath(); ctx.arc(x + cw - 10 - (pips - 1 - i) * 9, y + 12, 3.4, 0, 6.283); ctx.fill(); }
+    else { ctx.textAlign = "right"; ctx.fillStyle = "#ffd23f"; ctx.fillText(String(wins), x + cw - 8, y + 12.5); }
+    if (out) { ctx.strokeStyle = "#ff5d73"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x + 6, y + 12); ctx.lineTo(x + cw - 6, y + 12); ctx.stroke(); }
+  });
+  ctx.globalAlpha = 1;
+}
+/** My power-ups: beside the arena when there's room, else under it. */
+function drawStats(r) {
+  if (ATTRACT || !me.w || r.players.indexOf(net.sessionId) < 0) return;
+  const s = statsOf(V.stats, net.sessionId), rows = [["B", s[0]], ["F", s[1]], ["S", s[2]], ["K", s[3] ? "on" : "–"]];
+  const side = W - (OX + T * C) >= 96, size = 26;
+  rows.forEach(([c, n], k) => {
+    const x = side ? OX + T * C + 18 : W / 2 - 160 + k * 80 + 6, y = side ? OY + 8 + k * 36 : OY + T * R + 14;
+    ctx.fillStyle = ITEM_COLOR[c]; rr(x, y, size, size, 8); ctx.fill();
+    icon(c, x + size / 2, y + size / 2, size * 0.62);
+    ctx.fillStyle = "#f3eefc"; ctx.font = "800 15px system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText(String(n), x + size + 8, y + size / 2 + 1);
+  });
+}
+function drawFeed(now) {
+  if (ATTRACT) return;
+  fx.feed = fx.feed.filter((f) => now - f.born < 4000);
+  ctx.font = "700 12px system-ui, sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  fx.feed.forEach((f, k) => {
+    const w = ctx.measureText(f.text).width + 16, x = OX + T * C - 8, y = OY + 10 + k * 24;
+    ctx.globalAlpha = Math.min(1, (4000 - (now - f.born)) / 600);
+    ctx.fillStyle = "#0e0c1fcc"; rr(x - w, y, w, 20, 10); ctx.fill();
+    ctx.fillStyle = f.c; ctx.fillText(f.text, x - 8, y + 10.5);
+  });
+  ctx.globalAlpha = 1;
+}
+function bigText(text, color, y, size) {
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = `900 ${size}px system-ui, sans-serif`;
+  ctx.lineWidth = Math.max(4, size / 9); ctx.strokeStyle = "#0e0c1f"; ctx.lineJoin = "round"; ctx.strokeText(text, OX + (T * C) / 2, y);
+  ctx.fillStyle = color; ctx.fillText(text, OX + (T * C) / 2, y);
+}
+function drawBanners(r, t) {
+  if (ATTRACT) return;
+  const mid = OY + T * R * 0.42, big = Math.min(80, T * 2.4, W / 9), small = Math.max(14, Math.min(20, T * 0.6)), inRound = r.players.includes(net.sessionId);
+  if (r.ph === "count") {
+    const n = Math.ceil((r.startAt - t) / 1000);
+    bigText(`Round ${r.rn}`, "#f3eefc", mid - big * 0.85, small * 1.4);
+    bigText(n > 0 ? String(n) : "GO!", "#ffd23f", mid, big);
+    if (!inRound) bigText("Watching: you're in the next round", "#a99fd6", mid + big * 0.8, small);
+  } else if (r.ph === "play") {
+    if (t - r.startAt < 700) bigText("GO!", "#7ae582", mid, big);
+    else if (t >= r.sdAt && t - r.sdAt < 2200) bigText("SUDDEN DEATH!", "#ff5d73", mid, big * 0.62);
+    if (!inRound) bigText("Watching: you're in the next round", "#a99fd6", OY + T * (R - 0.5), small);
+    else if (isOut(r, net.sessionId)) bigText("Caught! Watch the rest of the round", "#ffb3bf", OY + T * (R - 0.5), small);
+  } else if (r.ph === "end" || (r.ph === "over" && Date.now() - r.endsAt + CONFIG.overMs < 1600)) {
+    const text = !r.win ? "Draw! Nobody survived" : r.win === net.sessionId ? "You win the round!" : `${nameOf(r, r.win)} wins the round!`;
+    bigText(text, r.win ? colorOf(r, r.win) : "#f3eefc", mid, Math.min(big * 0.55, (T * C) / Math.max(10, text.length * 0.62)));
+    if (r.ph === "end") bigText(`First to ${CONFIG.winsToWin} round wins takes the match`, "#a99fd6", mid + big * 0.6, small * 0.85);
+  }
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let board = null, dropped = false, hintRound = 0, placesHtml = ""; // dropped: the connection is down, the HUD keeps saying so
+const lb = { sentFor: -1, sent: null, shownFor: -1 };
+function hud(r) {
+  const n = humans().length;
+  $("net").textContent = ATTRACT ? "" : net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${amHost ? " · you run the bombs and bots" : ""}`;
+  if (!r) return;
+  // how to play, for your first round: during the countdown and the first seconds
+  if (!hintRound && r.players.includes(net.sessionId)) hintRound = r.id;
+  const hint = $("hint"), showHint = !ATTRACT && r.id === hintRound && (r.ph === "count" || Date.now() - r.startAt < 4000);
+  hint.textContent = (touchUI ? "D-pad moves · the red button drops a bomb" : "Arrows or WASD move · Space drops a bomb") + " · crates hide power-ups · last one standing wins the round";
+  hint.style.top = Math.round(OY + T * R * 0.64) + "px"; hint.style.opacity = showHint ? 1 : 0;
+  if (board && (r.ph === "end" || r.ph === "over") && r.win === net.sessionId && lb.sentFor !== r.id) { lb.sentFor = r.id; lb.sent = board.submit(1, "inc").catch(() => null); }
+  $("over").hidden = ATTRACT || r.ph !== "over";
+  if (r.ph !== "over") return;
+  $("oTitle").textContent = r.champ === net.sessionId ? "You win the match!" : r.champ ? `${nameOf(r, r.champ)} wins the match!` : "Match over";
+  $("oTitle").style.color = r.champ ? colorOf(r, r.champ) : "#f3eefc";
+  const order = [...r.players].sort((a, b) => (r.wins[b] || 0) - (r.wins[a] || 0));
+  const html = order.map((id) => { const w = r.wins[id] || 0; return `<li class="${id === net.sessionId ? "me" : ""}"><i style="background:${esc(colorOf(r, id))}"></i>${esc(id === net.sessionId ? "You" : nameOf(r, id))}<span>${w} win${w === 1 ? "" : "s"}</span></li>`; }).join("");
+  if (html !== placesHtml) { placesHtml = html; $("places").innerHTML = html; }
+  $("oNext").textContent = `Next match in ${Math.max(0, Math.ceil((r.endsAt - Date.now()) / 1000))}s`;
+  $("again").textContent = me.ready === r.id ? "Waiting for the others…" : "Play again";
+  if (lb.shownFor === r.id) return;
+  lb.shownFor = r.id;
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (lb.sentFor === r.id && lb.sent ? lb.sent : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No wins yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+$("again").addEventListener("click", () => {
+  const r = round();
+  if (!r || r.ph !== "over") return;
+  me.ready = r.id;
+  if (isHost()) onReady(net.sessionId); else net.send("ready", {});
+});
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches;
+const held = [], KEYS = { ArrowUp: 0, w: 0, ArrowRight: 1, d: 1, ArrowDown: 2, s: 2, ArrowLeft: 3, a: 3 };
+let padDir = -1;
+/** Directions I'm holding, the newest first (if it's blocked, the walker tries the older ones). */
+function heldDirs() { const out = padDir >= 0 ? [padDir] : []; for (let i = held.length - 1; i >= 0; i--) if (!out.includes(held[i])) out.push(held[i]); return out; }
+addEventListener("keydown", (e) => {
+  unlockAudio();
+  const d = KEYS[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+  if (d !== undefined) { e.preventDefault(); if (!held.includes(d)) held.push(d); }
+  else if ((e.key === " " || e.key === "Enter" || e.key.toLowerCase() === "x") && !e.repeat) { e.preventDefault(); me.wantBomb = true; }
+});
+addEventListener("keyup", (e) => { const d = KEYS[e.key.length === 1 ? e.key.toLowerCase() : e.key]; const i = held.indexOf(d); if (i >= 0) held.splice(i, 1); });
+addEventListener("blur", () => { held.length = 0; padDir = -1; });
+const pad = $("pad"), bombBtn = $("bombBtn");
+pad.hidden = bombBtn.hidden = !touchUI || ATTRACT;
+/** The D-pad works like a little stick: the direction is wherever your thumb is from its middle. */
+function padAt(e) {
+  const b = pad.getBoundingClientRect(), dx = e.clientX - (b.left + b.width / 2), dy = e.clientY - (b.top + b.height / 2);
+  padDir = Math.hypot(dx, dy) < 14 ? -1 : Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : dy > 0 ? 2 : 0;
+  for (const el of pad.children) el.classList.toggle("on", +el.dataset.d === padDir);
+}
+pad.addEventListener("pointerdown", (e) => { e.preventDefault(); unlockAudio(); try { pad.setPointerCapture(e.pointerId); } catch {} padAt(e); });
+pad.addEventListener("pointermove", (e) => { if (pad.hasPointerCapture && pad.hasPointerCapture(e.pointerId)) padAt(e); });
+for (const ev of ["pointerup", "pointercancel"]) pad.addEventListener(ev, () => { padDir = -1; for (const el of pad.children) el.classList.remove("on"); });
+bombBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); unlockAudio(); me.wantBomb = true; bombBtn.classList.add("on"); });
+for (const ev of ["pointerup", "pointercancel", "pointerleave"]) bombBtn.addEventListener(ev, () => bombBtn.classList.remove("on"));
+cv.addEventListener("pointerdown", (e) => { e.preventDefault(); unlockAudio(); });
+document.addEventListener("touchmove", (e) => { if (!e.target.closest(".card")) e.preventDefault(); }, { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0;
+function frame(now) {
+  requestAnimationFrame(frame); // first, so one exception can never stop the game
+  const t0 = performance.now(); // not `now`: the first frame after a freeze can be stamped from before it ended
+  if (frameAt && t0 - frameAt > 1000) { wokeAt = t0; world.was = false; host.last = null; } // woke from a stall: drop my host copy, adopt state again (see isHost)
+  frameAt = t0;
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // the first frame can be timed before `last`
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  amHost = isHost();
+  if (amHost) hostTick(dt, Date.now()); else world.was = false;
+  const r = round();
+  if (r) { V = view(r); clientTick(r, dt); myTick(r, dt); }
+  draw(r, dt, now);
+  if (now - lastHud > 200) { lastHud = now; hud(r); }
+}
+
+(async function start() {
+  if (ATTRACT) Object.assign(CONFIG, { seats: 6, crates: 0.5, dropChance: 0.55, startBombs: 2, startFire: 3, fuseMs: 1900, countMs: 300, roundMs: 7000, sdStepMs: 110,
+    endMs: 1400, winsToWin: 99, botThinkMs: [60, 160], botReactMs: [80, 200], botBombGapMs: [300, 900], botAggro: 0.6 });
+  net = await connect();
+  joinedAt = performance.now();
+  net.onState((st) => { S = st; });
+  net.on("bomb", (msg, from) => { if (isHost() && msg) applyBomb(from, msg); });
+  net.on("kick", (msg, from) => { if (isHost() && msg) applyKick(from, msg); });
+  net.on("pick", (msg, from) => { if (isHost() && msg) applyPick(from, msg); });
+  net.on("ready", (msg, from) => { if (isHost()) onReady(from); });
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const r0 = cached("round", S.shared.round, null);
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...(r0?.bots || []).map((b) => b.c)]);
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
