@@ -31,7 +31,7 @@ Without a key it still runs, offline against bots.
 - One `index.html`. The comment at the top of the script maps the code and explains the multiplayer.
 - The arena size, fuse, blast length, speeds, power-up odds, round timer and bot behavior are all in `CONFIG`.
 - **Host-run rules:** The host's browser times every bomb, resolves the blasts and decides who got caught; if it leaves, the next player takes over.
-- **Bots:** Bots fill the arena up to four players. They bomb crates and rivals and run from blasts. Someone who joins mid-round takes over a bot's seat.
+- **Bots:** Bots fill the arena up to four players. They bomb crates and rivals, grab power-ups, kick bombs and run from blasts. Someone who joins mid-round takes over a bot's seat.
 - **Leaderboard:** Rounds won, all time, shown at the end of each match.
 - **Live sync:** Every bomb goes off on every screen at the same moment.
 - `?attract` runs it offline with bots only. The preview video is recorded from it.

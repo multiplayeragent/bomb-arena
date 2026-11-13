@@ -20,6 +20,7 @@
   .card ol { text-align: left; margin: 6px 0; padding-left: 26px; font-size: 14px; }
   .card li span { float: right; font-variant-numeric: tabular-nums; }
   .card li.me { color: #ffd23f; font-weight: 700; }
+  .card li.note { list-style: none; margin-left: -18px; color: #a99fd6; }
   .card li i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; }
   button.go { width: 100%; min-height: 48px; margin-top: 12px; border: 0; border-radius: 12px; background: #ffd23f; color: #221d42; font: 800 17px system-ui, sans-serif; cursor: pointer; }
   #oNext { color: #a99fd6; font-size: 13px; margin-top: 8px; }
@@ -45,7 +46,7 @@
 <div id="over" hidden><div class="card">
   <h2 id="oTitle"></h2>
   <ol id="places"></ol>
-  <h3>MOST ROUNDS WON</h3><ol id="board"><li>Loading the leaderboard…</li></ol>
+  <h3>MOST ROUNDS WON</h3><ol id="board"><li class="note">Loading the leaderboard…</li></ol>
   <button class="go" id="again">Play again</button><div id="oNext"></div>
 </div></div>
 <script>
@@ -61,7 +62,7 @@
  *   WALKING ....... tile-to-tile movement for players and bots; smoothing other people's moves
  *   ROUNDS (HOST) . countdown, play, who got caught, round wins, the match. Only the host writes these.
  *   WORLD (HOST) .. bombs going off, crates breaking, power-ups, kicks, walls closing in
- *   BOTS (HOST) ... danger map, running from blasts, bombing crates and rivals, grabbing power-ups
+ *   BOTS (HOST) ... danger map, running from blasts, bombing crates and rivals, grabbing power-ups, kicking bombs
  *   ME ............ my walker, dropping bombs, kicking, picking up. Each player writes only its own.
  *   EFFECTS ....... particles, shake, sounds, and spotting what changed in state
  *   DRAW .......... floor, blocks, crates, power-ups, bombs, flames, players, top bar, banners
@@ -127,6 +128,8 @@ const CONFIG = {
   botAggroLate: 0.85,       // …and once the walls start dropping
   botHunt: 0.4,             // chance a bot goes after a rival while there are still crates to break
   botMistake: 0.18,         // chance a bot misjudges how far other bombs reach when it runs
+  botKick: 0.75,            // chance a bot with Kick boots a bomb beside it down the lane at a rival…
+  botKickGapMs: [500, 1200], // …and how long until it looks for another one to kick
   botSafetyMs: 200,         // bots keep this much time between themselves and a blast
   wallAheadMs: 2500,        // bots leave tiles that sudden-death walls fill within this long
   board: "round-wins",      // leaderboard name
@@ -577,6 +580,14 @@ function applyKick(from, msg) {
   if (!b || (b.k && now < b.k.t1) || d < 0 || d > 3) return;
   const [bx, by] = bombTile(b, now), p = posOf(r, from);
   if (Math.abs(p.x + DX[d] - bx) + Math.abs(p.y + DY[d] - by) > 1.2) return; // the kicker stands next to it, behind it
+  const n = slideTiles(r, b, d, now);
+  if (!n) return;
+  b.k = { x0: bx, y0: by, t0: now, t1: now + n * CONFIG.kickTileMs }; b.x = bx + DX[d] * n; b.y = by + DY[d] * n;
+  world.dirty.boom = true;
+}
+/** How many tiles bomb b slides when kicked in direction d: until a wall, crate, power-up, bomb or player is in the way. */
+function slideTiles(r, b, d, now) {
+  const [bx, by] = bombTile(b, now);
   const people = new Set(r.players.filter((id) => !isOut(r, id)).map((id) => { const q = posOf(r, id); return tileOf(Math.round(q.x), Math.round(q.y)); }));
   const others = bombTileSet(world.bombs.filter((o) => o !== b), now);
   let n = 0;
@@ -585,9 +596,7 @@ function applyKick(from, msg) {
     if (!inArena(x, y) || world.grid[t] !== "." || others.has(t) || people.has(t)) break;
     n++;
   }
-  if (!n) return;
-  b.k = { x0: bx, y0: by, t0: now, t1: now + n * CONFIG.kickTileMs }; b.x = bx + DX[d] * n; b.y = by + DY[d] * n;
-  world.dirty.boom = true;
+  return n;
 }
 /** A "pick" intent: the player stepped onto a power-up. */
 function applyPick(from, msg) {
@@ -610,7 +619,8 @@ function give(id, c) {
 // ── BOTS (HOST) ─────────────────────────────────────────────────────────────────────
 // A bot: run from any blast line it stands in; else bomb when that breaks crates or catches a rival AND
 // there is a way out; else walk (through tiles no bomb will reach) to a power-up, a crate or a rival.
-function newBot(x, y) { return { w: newWalker(x, y), plan: [], flee: false, alarmed: false, thinkAt: 0, bombAt: 0 }; }
+// With the Kick power-up it also boots a bomb beside it down the lane at a rival, or out of its way when boxed in.
+function newBot(x, y) { return { w: newWalker(x, y), plan: [], flee: false, alarmed: false, cornered: false, thinkAt: 0, bombAt: 0, kickAt: 0 }; }
 const passable = (t) => { const c = world.grid[t]; return c !== "#" && c !== "c" && c !== undefined && !host.bombSet.has(t); };
 function botsTick(r, dt, now) {
   if (r.ph !== "play" && r.ph !== "end") return;
@@ -630,7 +640,7 @@ function dangerMap(r, now, extra, misjudgeFor = -1) {
   const from = new Array(N).fill(Infinity), to = new Array(N).fill(-Infinity), wall = new Array(N).fill(Infinity), flame = CONFIG.flameMs;
   const mark = (t, a, b) => { if (a < from[t]) from[t] = a; if (b > to[t]) to[t] = b; };
   for (const f of world.fire) if (now < f.at + flame) for (const t of blastTiles(f)) mark(t, f.at, f.at + flame);
-  const list = [...world.bombs, ...extra].map((b) => ({ b, at: b.at, tile: bombTile(b, now) })), done = new Set();
+  const list = [...world.bombs, ...extra].map((b) => ({ b, at: b.at, tile: [b.x, b.y] })), done = new Set(); // a sliding bomb counts where it will stop
   for (;;) {
     let e = null;
     for (const x of list) if (!done.has(x) && (!e || x.at < e.at)) e = x;
@@ -662,20 +672,31 @@ function escapePath(sx, sy, D, now, stepMs) {
   }
   return null;
 }
-/** No clean way out: head for the reachable tile that gets hit last (and hope). */
-function lastResort(sx, sy, D) {
-  const start = tileOf(sx, sy), prev = new Map([[start, null]]), queue = [start];
-  let best = start;
+/** No clean way out: head for the reachable tile that gets hit last (and hope). Not one a rival already
+ *  stands on: the walls would crush both at once and nobody would win the round. giveWay = a bot that
+ *  moved first shares this tile, so this one has to find another. */
+function lastResort(sx, sy, D, rivals, giveWay) {
+  const start = tileOf(sx, sy), prev = new Map([[start, null]]), queue = [start], hitAt = (t) => Math.min(D.from[t], D.wall[t]);
+  let best = giveWay ? -1 : start;
   for (let qi = 0; qi < queue.length && qi < 60; qi++) {
     const t = queue[qi];
-    if (Math.min(D.from[t], D.wall[t]) > Math.min(D.from[best], D.wall[best])) best = t;
+    if (!rivals.has(t) && (best < 0 || hitAt(t) > hitAt(best))) best = t;
     for (let d = 0; d < 4; d++) { const n = t + DX[d] + DY[d] * C; if (!prev.has(n) && passable(n)) { prev.set(n, [t, d]); queue.push(n); } }
   }
-  return pathTo(prev, best);
+  return best < 0 ? [] : pathTo(prev, best);
 }
 function pathTo(prev, t) { const dirs = []; for (let s = prev.get(t); s; s = prev.get(s[0])) dirs.unshift(s[1]); return dirs; }
-/** Tiles where the other players still in the round stand. */
-function rivalTiles(r, id) { return new Set(r.players.filter((o) => o !== id && !isOut(r, o)).map((o) => { const p = posOf(r, o); return tileOf(Math.round(p.x), Math.round(p.y)); })); }
+/** Tiles where the other players still in the round stand, and the ones bots are stepping onto. */
+function rivalTiles(r, id) {
+  const out = new Set();
+  for (const o of r.players) {
+    if (o === id || isOut(r, o)) continue;
+    const p = posOf(r, o), bot = host.bots.get(o);
+    out.add(tileOf(Math.round(p.x), Math.round(p.y)));
+    if (bot) out.add(tileOf(bot.w.tx, bot.w.ty));
+  }
+  return out;
+}
 /** Walk the four arms of a blast from (x, y) of length `power`, calling hit(t, c) per tile until it returns true. */
 function scanArms(x, y, power, hit) {
   for (let d = 0; d < 4; d++) for (let s = 1; s <= power; s++) {
@@ -685,25 +706,55 @@ function scanArms(x, y, power, hit) {
 }
 function cratesInReach(x, y, power, D) { let n = 0; scanArms(x, y, power, (t, c) => { if (c === "c" && D.from[t] === Infinity) n++; return false; }); return n; } // crates no other bomb will get
 function rivalInLine(x, y, power, rivals) { let hit = false; scanArms(x, y, power, (t) => (hit = hit || rivals.has(t))); return hit || rivals.has(tileOf(x, y)); }
+/** A bomb a bot may kick: lying still, and if it slid here, for long enough that the bot has noticed it. */
+const kickable = (b, now) => !b.k || now > b.k.t1 + CONFIG.botReactMs[1];
+const nextToBomb = (w, now) => world.bombs.some((b) => Math.abs(b.x - w.cx) + Math.abs(b.y - w.cy) === 1 && kickable(b, now));
+/** A bot with Kick boots a bomb on a tile beside it. With `rivals`: only one that would slide to where its blast
+ *  catches a rival. Without: whichever slides furthest (the bot is boxed in).
+ *  Returns the direction kicked, or -1. The kick itself is the same intent a player sends. */
+function botKick(r, id, bot, rivals, now) {
+  const w = bot.w;
+  let best = -1, bestN = 0, bomb = null;
+  for (let d = 0; d < 4; d++) {
+    const b = world.bombs.find((b) => b.x === w.cx + DX[d] && b.y === w.cy + DY[d] && kickable(b, now));
+    const n = b ? slideTiles(r, b, d, now) : 0;
+    if (!n || n <= bestN) continue;
+    if (rivals && !rivalInLine(b.x + DX[d] * n, b.y + DY[d] * n, b.p, rivals)) continue;
+    best = d; bestN = n; bomb = b;
+  }
+  if (best < 0) return -1;
+  applyKick(id, { r: r.id, i: bomb.i, d: best });
+  host.bombSet = bombTileSet(world.bombs, now); host.danger = dangerMap(r, now, []); // everyone's danger just moved
+  return best;
+}
 /** A bot standing on a tile picks its next step (called by walk()). */
 function botDecide(r, id, bot, now) {
-  const w = bot.w, here = tileOf(w.cx, w.cy), D = host.danger, stepMs = stepMsOf(world.stats, id), inDanger = !safeTile(D, here, now);
+  const w = bot.w, here = tileOf(w.cx, w.cy), stepMs = stepMsOf(world.stats, id), st = statsOf(world.stats, id), canKick = st[3] > 0 && r.ph === "play";
+  if (canKick && now >= bot.kickAt && nextToBomb(w, now)) { // Kick: a bomb beside me that would slide to where it catches a rival? Boot it.
+    bot.kickAt = now + rand(...CONFIG.botKickGapMs);
+    const d = Math.random() < CONFIG.botKick ? botKick(r, id, bot, rivalTiles(r, id), now) : -1;
+    if (d >= 0) return [d]; // face it for this frame; the plan carries on from the next
+  }
+  const D = host.danger, inDanger = !safeTile(D, here, now);
   if (bot.plan.length) { // keep going while the next tile is still a good idea
     const d = bot.plan[0], n = tileOf(w.cx + DX[d], w.cy + DY[d]);
-    if (passable(n) && (bot.flee ? timeOk(D, n, now, now + stepMs * 1.5) : !inDanger && safeTile(D, n, now))) { bot.plan.shift(); return [d]; }
+    const taken = bot.cornered && bot.plan.length === 1 && rivalTiles(r, id).has(n); // someone got to my last refuge first
+    if (!taken && passable(n) && (bot.flee ? timeOk(D, n, now, now + stepMs * 1.5) : !inDanger && safeTile(D, n, now))) { bot.plan.shift(); return [d]; }
     bot.plan = [];
   }
-  if (!inDanger) bot.flee = bot.alarmed = false;
+  if (!inDanger) bot.flee = bot.alarmed = bot.cornered = false;
   else if (!bot.alarmed && !bot.flee) { bot.alarmed = true; bot.thinkAt = now + rand(...CONFIG.botReactMs); } // a moment to notice
   if (now < bot.thinkAt) return [];
   bot.thinkAt = now + rand(...CONFIG.botThinkMs);
-  const seat = r.players.indexOf(id);
+  const seat = r.players.indexOf(id), rivals = rivalTiles(r, id);
   if (inDanger) { // run. Now and then a bot misjudges how far the other bombs reach, like people do.
-    const seen = Math.random() < CONFIG.botMistake ? dangerMap(r, now, [], seat) : D;
-    bot.plan = escapePath(w.cx, w.cy, seen, now, stepMs) || lastResort(w.cx, w.cy, D); bot.flee = true;
+    const seen = Math.random() < CONFIG.botMistake ? dangerMap(r, now, [], seat) : D, way = escapePath(w.cx, w.cy, seen, now, stepMs);
+    if (!way && canKick) { const d = botKick(r, id, bot, null, now); if (d >= 0) return [d]; } // boxed in by a bomb: kick it away, then look again
+    const giveWay = !way && [...host.bots].some(([o, b]) => o < id && !isOut(r, o) && tileOf(b.w.tx, b.w.ty) === here); // two bots, one tile: the later one moves
+    bot.plan = way || lastResort(w.cx, w.cy, D, rivals, giveWay); bot.flee = true; bot.cornered = !way;
     return bot.plan.length ? [bot.plan.shift()] : [];
   }
-  const st = statsOf(world.stats, id), rivals = rivalTiles(r, id), aggro = now > r.sdAt ? CONFIG.botAggroLate : CONFIG.botAggro;
+  const aggro = now > r.sdAt ? CONFIG.botAggroLate : CONFIG.botAggro;
   if (r.ph === "play" && now >= bot.bombAt && world.bombs.filter((b) => b.o === seat).length < st[0] && !host.bombSet.has(here)
       && (cratesInReach(w.cx, w.cy, st[1], D) > 0 || (rivalInLine(w.cx, w.cy, st[1], rivals) && Math.random() < aggro))) {
     const esc = escapePath(w.cx, w.cy, dangerMap(r, now, [{ i: -1, x: w.cx, y: w.cy, at: now + CONFIG.fuseMs, p: st[1], o: seat, k: null }]), now, stepMs);
@@ -1239,11 +1290,11 @@ function hud(r) {
   if (lb.shownFor === r.id) return;
   lb.shownFor = r.id;
   const list = $("board");
-  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading…</li>";
+  if (!board) { list.innerHTML = "<li class=\"note\">Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li class=\"note\">Loading…</li>";
   (lb.sentFor === r.id && lb.sent ? lb.sent : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No wins yet. Be the first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li class=\"note\">No wins yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li class=\"note\">Couldn't load the leaderboard.</li>"; });
 }
 $("again").addEventListener("click", () => {
   const r = round();
